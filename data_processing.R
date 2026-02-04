@@ -479,3 +479,158 @@ fish_summary_state <- fish_summary_join |>
 
 
 write_feather(fish_summary_state, "shiny_pieces/individual_summary")
+
+# summarize depth reading by day for individuals
+# that had depth tags
+
+
+individual_dailydepth.summary <- fish_detections.dat |>
+  filter(
+    !flag_false,
+    sensor_type == "depth",
+    real_sensor > 0
+  ) |>
+  group_by(fish_id, detection_date) |>
+  summarize(
+    min_depth_ft = min(real_sensor * 3.28084),
+    median_depth_ft = median(real_sensor * 3.28084),
+    max_depth_ft = max(real_sensor * 3.28084),
+    count = n(),
+    sensor_maximum = first(sensor_maximum) * 3.28084
+  ) |>
+  mutate(pt_class = ifelse(median_depth_ft > sensor_maximum, "exceed", "normal"))
+
+# write daily depth summaries for use in Shiny
+
+write_feather(individual_dailydepth.summary, "shiny_pieces/individual_dailydepth_summary")
+
+# summarize daily detections by location for individuals
+
+individual_daily.summary <- fish_detections.dat %>%
+  filter(!flag_false) %>%
+  group_by(fish_id, location_id, detection_date) %>%
+  summarize(count = n()) |>
+  left_join(fish.df, by = "fish_id")
+
+# write daily detection summaries for use in Shiny
+
+write_feather(individual_daily.summary, "shiny_pieces/individual_daily_summary")
+
+## summarize locations where individuals
+## have been detected for use in maps of
+# individual fish
+
+individual_receiver_summary <- fish_detections.dat %>%
+  filter(
+    !is.na(fish_id),
+    !flag_false
+  ) %>%
+  group_by(fish_id, location_id) %>%
+  summarize(
+    detections = n(),
+    earliest_date = min(detection_date),
+    latest_datetime = max(detection_datetime),
+    latest_date = as_date(latest_datetime),
+    unique_days = n_distinct(detection_date),
+    latitude = first(latitude),
+    longitude = first(longitude)
+  ) %>%
+  group_by(fish_id) %>%
+  mutate(
+    most_recent_receiver = latest_datetime == max(latest_datetime, na.rm = T),
+    recent_status = case_when(
+      most_recent_receiver == TRUE ~ "Latest",
+      TRUE ~ "Previous"
+    )
+  )
+
+write_feather(individual_receiver_summary, "shiny_pieces/individual_receiver_summary")
+
+# summarizing deployments for shiny app
+
+# daily counts by deployment
+
+location_daily <- fish_detections.dat %>%
+  filter(!flag_false) |>
+  group_by(location_id, species, detection_date) %>%
+  summarize(
+    detections = n(),
+    individuals = n_distinct(fish_id)
+  )
+
+write_feather(
+  location_daily,
+  "shiny_pieces/deployment_daily"
+)
+
+# active receivers
+
+location_latest <- location_daily %>%
+  group_by(location_id) %>%
+  slice(which.max(detection_date)) %>%
+  select(location_id,
+    most_recent = detection_date
+  )
+
+# summarize active deployments...this will be robust
+# to a situation where you add a new receiver at a
+# location where another one was lost; also,
+# right now the firmwarer/battery change dates
+# are just placeholders in case we wanted to add
+# that actual info in later
+
+active_deployments <- deployments.df |>
+  group_by(location_id, latitude, longitude) |>
+  arrange(end_datetime) |>
+  summarize(
+    last_removed = max(end_datetime),
+    internal_receiver_id = paste(sort(unique(internal_receiver_id)), collapse = ", "),
+    end_reason = last(end_reason),
+    .groups = "drop"
+  ) |>
+  mutate(status = case_when(
+    is.na(end_reason) ~ "Active",
+    TRUE ~ "Inactive"
+  )) |>
+  left_join(location_latest, by = "location_id") %>%
+  mutate(
+    battery_change_date = today(),
+    firmware_update_date = today(),
+    days_since_change = as.numeric(Sys.Date() - as.Date(battery_change_date)),
+    batt_percent = ((425 - days_since_change)) / 425 * 100
+  )
+
+write_feather(
+  active_deployments,
+  "shiny_pieces/active_deployments"
+)
+
+# grab a piece that allows plotting of when a location
+# had an active receiver
+
+location_coverage <- deployments.df |>
+  filter(location_id %in% active_deployments$location_id)
+
+write_feather(
+  location_coverage,
+  "shiny_pieces/location_coverage"
+)
+
+
+# get unique daily fish by receiver
+
+receiver_uniquefish <- fish_detections.dat %>%
+  filter(!flag_false) |>
+  distinct(fish_id, detection_date, internal_receiver_id, .keep_all = T)
+
+write_feather(
+  receiver_uniquefish,
+  "shiny_pieces/receiver_uniquefish"
+)
+
+# export raw fish detections
+
+write_feather(
+  fish_detections.dat,
+  "shiny_pieces/fish_detection_data"
+)
