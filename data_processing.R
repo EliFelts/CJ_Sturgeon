@@ -135,7 +135,23 @@ acoustic_id.df <- spec.read %>%
 # here in order so i could work through the code
 # but they didn't actually have transmitter id
 
-fish.df <- read_csv(file = str_c(shared_parent.dir, "Telemetry_TaggedSturgeon_Info.xlsx", sep = "/"))
+# note that there are ways to code these if you end up
+# reusing transmitters; this code doesn't have that built in
+# now because that hasn't happened in these fish
+
+fish.df <- read_excel(path = str_c(shared_parent.dir, "Telemetry_TaggedSturgeon_Info.xlsx", sep = "/")) |>
+  mutate(
+    fish_id = str_c(serial_number, date_caught, "STG", sep = "_"),
+    species = "STG",
+    release_datetime = force_tz(date_caught, "America/Denver")
+  ) |>
+  left_join(transmitters.df, by = "serial_number") |>
+  mutate(fish_end_date = release_datetime + days(tag_life_days)) |>
+  select(fish_id,
+    serial_number, species, release_datetime,
+    latitude = release_location_lat, longitude = release_location_long,
+    fork_length_cm = fish_fork_length, fish_end_date, mean_delay
+  )
 
 # all detection csv files should be placed in the
 # shared OneDrive folder (migrate to sharepoint once setup)
@@ -227,16 +243,239 @@ fish_by <- join_by(serial_number, between(detection_datetime_local, release_date
 # time stamp if it is currently NA because they haven't been
 # confirmed as being removed
 
-detection_fish.join <- detections_receivers.join %>%
+detection_fish.join <- detections_deployments.join %>%
   filter(!is.na(detection_datetime)) %>%
   left_join(
     fish.df,
     by = fish_by
   ) %>%
-  select(fish_id, species, species_name, serial_number, acoustic_tag_id,
+  select(fish_id, species, serial_number, acoustic_tag_id,
     detection_datetime, detection_datetime_local, internal_receiver_id,
     sensor_type, real_sensor, sensor_maximum,
     location_id, deployment_id,
     latitude = latitude.x,
     longitude = longitude.x
   )
+
+nodt <- detections_deployments.join |>
+  filter(is.na(detection_datetime))
+
+# now add in some other categorizations for the detections
+# for season and whether at day versus night
+
+detection_sunlight.dat <- tibble(detection_date = seq(min(detection_fish.join$detection_datetime),
+  max(detection_fish.join$detection_datetime),
+  by = "days"
+)) %>%
+  mutate(
+    detection_date = as_date(detection_date),
+    getSunlightTimes(
+      date = detection_date,
+      lat = 42.97197,
+      lon = -115.8568,
+      tz = "America/Denver"
+    )
+  ) %>%
+  select(detection_date, dawn, dusk)
+
+
+detections_sunlight.join <- detection_fish.join %>%
+  filter(!is.na(deployment_id)) |>
+  mutate(
+    detection_datetime = with_tz(detection_datetime, tz = "America/Denver"),
+    detection_date = as_date(detection_datetime)
+  ) %>%
+  left_join(detection_sunlight.dat, by = "detection_date") %>%
+  mutate(
+    daylight_category = case_when(
+      detection_datetime >= dawn & detection_datetime <= dusk ~ "day",
+      TRUE ~ "night"
+    ),
+    season = case_when(
+      month(detection_date) %in% c(12, 1, 2) ~ "winter",
+      month(detection_date) %in% 3:5 ~ "spring",
+      month(detection_date) %in% 6:8 ~ "summer",
+      month(detection_date) %in% 9:11 ~ "fall"
+    )
+  )
+
+# get only detections associated with fish and that can
+# be associated with a known location, and
+# find suspected false detections flagged by being
+# isolated from any other detections for a given
+# fish/deployment combination by more than 1 hour;
+# to adjust the window for this criteria change
+# the value in min_gap > x; currently, this
+# uses the convention of 30X the nominal delay
+# of slowest transmitters; so basically it's saying that for
+# transmitters with a nominal delay of 180 s - which
+# is what most in this data set are - if a single detection
+# occurs in isolation by 1.5 hours (3600 s) from any others for a given fish
+# at a given location then it is likely false and due
+# to tag collision or other mechanisms; note that
+# this uses location and fish id, not necessarily receiver
+# and transmitter id
+
+fish_detections.dat <- detections_sunlight.join |>
+  filter(
+    !is.na(fish_id),
+    !is.na(location_id)
+  ) |>
+  arrange(location_id, fish_id, detection_datetime) |>
+  group_by(location_id, fish_id) |>
+  mutate(
+    lag_gap = as.numeric(detection_datetime - lag(detection_datetime), units = "secs"),
+    lead_gap = as.numeric(lead(detection_datetime) - detection_datetime, units = "secs"),
+    lag_gap = replace_na(lag_gap, Inf),
+    lead_gap = replace_na(lead_gap, Inf),
+    min_gap = pmin(lag_gap, lead_gap),
+    flag_false = min_gap > 5400
+  )
+
+# flag fish that show up in clustered
+# patterns at a single receiver in a way that
+# suggests they may potentially be dead; i wrote
+# a custom function for this; see the documentation
+# for IDFGtelemetry::indentify_cluster() for details
+# of what it's doing; right now i think
+# it's not quite sensitive enough but it's difficult
+# to set hard and fast criteria for what clusters
+# indicate a fish may be dead in range of a receiver;
+# this function takes ~ 5-10 minutes to run
+
+flag_clustered_fish.df <- identify_cluster(detection.df = fish_detections.dat)
+
+# summarize relevant detection history metrics for individuals;
+# this will be used to evaluate criteria for whether to
+# treat individuals as part of the sample (i.e. drop those
+# suspected to have died shortly after tagging) and if
+# they need to be right-censored then when that should occur
+
+# right now, dropping out detections that were flagged
+# as potentially false because that's standard telemetry
+# analysis protocol...there are arguments to go either way on
+# that, but it probably won't make a huge difference in determining
+# fish status
+
+fish_battery.df <- fish.df %>%
+  left_join(transmitters.df, by = "serial_number") %>%
+  select(fish_id, tag_life_days)
+
+individual_detection.table <- fish_detections.dat %>%
+  filter(flag_false == F) %>% # remove false detections
+  left_join(fish.df, by = c(
+    "fish_id", "species",
+    "serial_number"
+  )) %>%
+  left_join(fish_battery.df, by = "fish_id") |>
+  mutate(days_at_large = (as.numeric(detection_datetime) - as.numeric(release_datetime)) / 86400) |>
+  group_by(fish_id) %>%
+  summarize(
+    n_detections = n(),
+    unique_locations = n_distinct(location_id),
+    max_days_at_large = round(as.numeric(max(days_at_large, na.rm = TRUE))),
+    latest_detection = max(detection_datetime, na.rm = T),
+    .latest_idx = which.max(replace_na(detection_datetime, as.POSIXct("1970-01-01", tz = "UTC"))),
+    latest_location = location_id[.latest_idx],
+    n_oversensormax = sum(real_sensor > sensor_maximum, na.rm = T),
+    start_oversensormax = min(detection_datetime[real_sensor > sensor_maximum], na.rm = T),
+    fish_end_date = first(fish_end_date),
+    latest_receiver = internal_receiver_id[.latest_idx],
+    latest_lat = latitude.x[.latest_idx],
+    latest_lon = longitude.x[.latest_idx],
+    .groups = "drop"
+  ) |>
+  mutate(
+    latest_download = max(fish_detections.dat$detection_datetime),
+    presumed_active = ifelse(latest_download < fish_end_date, TRUE, FALSE),
+    time_since_last = case_when(
+      presumed_active == TRUE ~ (as.numeric(latest_download) - as.numeric(latest_detection)) / 86400,
+      presumed_active == FALSE ~ (as.numeric(fish_end_date) - as.numeric(latest_detection)) / 86400
+    )
+  )
+
+
+# left join to original fish table so
+# those that were never detected are included
+
+fish_summary_join <- fish.df |>
+  select(
+    fish_id, serial_number, release_datetime, fish_end_date,
+    species, fork_length_cm
+  ) |>
+  left_join(individual_detection.table, by = c("fish_id", "fish_end_date")) |>
+  left_join(fish_battery.df, by = "fish_id") |>
+  mutate(
+    across(
+      c(n_detections, unique_locations),
+      ~ coalesce(.x, 0)
+    ),
+    battery_end_date = release_datetime + days(tag_life_days)
+  ) |>
+  left_join(flag_clustered_fish.df, by = "fish_id")
+
+# assign status as excluded, right censored,
+# or active based on criteria; also make
+# columns indicating reasons for these
+# determinations; make a few things factors
+# bc that works better in some of the shiny
+# table displays; right now i'm gonna set these
+# to not right censor; right now no flagged clusters
+# either and not using max gap, so just take out
+# the part about flagging
+
+fish_summary_state <- fish_summary_join |>
+  mutate(
+    status = case_when(
+      n_detections == 0 ~ "excluded",
+      max_days_at_large <= 30 ~ "excluded",
+      fish_end_date < battery_end_date ~ "right_censored",
+      # time_since_last >= 365 & fish_end_date == battery_end_date ~ "right_censored",
+      # fish_end_date == battery_end_date & battery_end_date < today() ~ "right_censored",
+      TRUE ~ "active"
+    ),
+    exclude_reason = case_when(
+      n_detections == 0 ~ "never_detected",
+      !is.na(max_days_at_large) & max_days_at_large <= 30 ~ "handling_window",
+      TRUE ~ NA
+    ),
+    censor_reason = case_when(
+      fish_end_date < battery_end_date ~ "known_mortality",
+      time_since_last >= 365 & fish_end_date == battery_end_date ~ "missing_year",
+      fish_end_date == battery_end_date & battery_end_date < today() ~ "battery_expired",
+      TRUE ~ NA
+    ),
+    # flags = case_when(
+    #   !is.na(max_days_at_large) & max_days_at_large > 30 & fish_end_date == battery_end_date & !is.na(flagged_runs) ~ "suspicious_cluster",
+    #   !is.na(max_days_at_large) & max_days_at_large > 30 & fish_end_date == battery_end_date & is.na(flagged_runs) & max_gap_days >= 200 ~ "long_gap",
+    #   TRUE ~ NA
+    # ),
+    censor_date = case_when(
+      censor_reason == "known_mortality" ~ fish_end_date,
+      # censor_reason == "missing_year" ~ latest_detection + days(1),
+      # censor_reason == "battery_expired" ~ battery_end_date,
+      TRUE ~ NA
+    ),
+    status = factor(status,
+      levels = c("active", "right_censored", "excluded")
+    ),
+    censor_reason = factor(censor_reason,
+      levels = c(
+        "battery_expired",
+        "known_mortality",
+        "missing_year"
+      )
+    )
+  )
+
+# write fish summary table as an output. At this point this
+# table is informative for the shiny app as well as
+# subsequent analysis where we need to know which fish should
+# be considered alive at any given time; note that the filters
+# for dropping fish from analysis are still being refined;
+# this is a good start, with some additional candidates
+# being flagged, and a few other situations that need to
+# be considered
+
+
+write_feather(fish_summary_state, "shiny_pieces/individual_summary")
