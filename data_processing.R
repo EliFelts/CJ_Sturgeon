@@ -617,6 +617,16 @@ write_feather(
 )
 
 
+# data frame of lost receivers
+
+lost_receivers <- deployments.df |>
+  filter(end_reason == "lost")
+
+write_feather(
+  lost_receivers,
+  "shiny_pieces/lost_receivers"
+)
+
 # get unique daily fish by receiver
 
 receiver_uniquefish <- fish_detections.dat %>%
