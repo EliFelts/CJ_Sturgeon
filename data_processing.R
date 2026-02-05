@@ -164,37 +164,115 @@ detections.files <- list.files(
   full.names = T
 )
 
-# sometimes can encounter downloaded files that are blank, which causes them
-# to get read in with different column types and then they
-# can't be bound together; here, a function is used to
-# drop those cases when it's just a blank csv, so basically
-# this will read in every csv and bind them all together
-# into a single data frame
 
-detections.read <- map_dfr(detections.files, function(file) {
-  df <- read_csv(file,
-    col_types = cols(
-      `Date and Time (UTC)` = col_datetime(format = ""),
-      Receiver = col_character(),
-      Transmitter = col_character(),
-      `Sensor Value` = col_double(),
-      .default = col_skip()
+# there are some defensive steps in the reading of the csv downloads
+# from the receivers; once in a great while some of these
+# have gotten saved as csv but they get stored without
+# the actual comma delimiter, so they don't get read in
+# properly; this helper function will identify the delimiter,
+# which has basically only ever been comma or tabs, and then
+# that information gets used to tell the read function
+# how to pull it in properly; another step is required because
+# some of the downloaded files are blank, which causes them
+# to get read in with different column types and then they
+# can't be bound together; withi the read function it will
+# drop those cases when it's just a blank csv; this initial
+# read also forces the date/time column to come in as a character
+# after which we want to parse the date/time
+
+detect_delim <- function(file) {
+  header <- readr::read_lines(file, n_max = 1)
+
+  counts <- c(
+    "," = str_count(header, fixed(",")),
+    ";" = str_count(header, fixed(";")),
+    "\t" = str_count(header, fixed("\t")),
+    "|" = str_count(header, fixed("|"))
+  )
+
+  names(which.max(counts))
+}
+
+read_one <- function(file) {
+  if (file.info(file)$size == 0) {
+    return(NULL)
+  }
+
+  delim <- detect_delim(file)
+
+  df <- readr::read_delim(
+    file,
+    delim = delim,
+    col_types = readr::cols(
+      `Date and Time (UTC)` = readr::col_character(), # FORCE character
+      Receiver = readr::col_character(),
+      Transmitter = readr::col_character(),
+      `Sensor Value` = readr::col_double(),
+      .default = readr::col_skip()
+    ),
+    show_col_types = FALSE,
+    progress = FALSE,
+    trim_ws = TRUE
+  )
+
+  if (nrow(df) == 0) {
+    return(NULL)
+  }
+
+  # schema check
+  required <- c("Date and Time (UTC)", "Receiver", "Transmitter", "Sensor Value")
+  missing <- setdiff(required, names(df))
+  if (length(missing) > 0) {
+    warning(
+      "Bad schema in ", basename(file), " (likely delimiter): missing ",
+      paste(missing, collapse = ", ")
+    )
+    return(NULL)
+  }
+
+  df %>%
+    transmute(
+      file = basename(file),
+      delim = delim,
+      dt_raw = `Date and Time (UTC)`,
+      internal_receiver_id = Receiver,
+      acoustic_tag_id = Transmitter,
+      raw_sensor = `Sensor Value`
+    )
+}
+
+# first step or reading all these detection files in
+
+detections.read_raw <- purrr::map_dfr(detections.files, read_one)
+
+# parse the datetimes; these tend to get saved in two forms in
+# these files, so this is designed to work properly with
+# either of those
+
+detections.read_parse <- detections.read_raw |>
+  mutate(
+    detection_datetime = parse_date_time(
+      dt_raw,
+      orders = c("Y-m-d H:M:S", "m/d/Y H:M", "m/d/Y H:M:S"),
+      tz = "UTC"
     )
   )
 
-  if (nrow(df) > 0) {
-    df
-  } else {
-    NULL
-  }
-}) %>%
-  distinct() %>%
-  select(
-    detection_datetime = `Date and Time (UTC)`,
-    internal_receiver_id = Receiver,
-    acoustic_tag_id = Transmitter,
-    raw_sensor = `Sensor Value`
-  )
+# search for any NA in detection_datetime; there should
+# be none, but if there is it needs to be diagnosed; in
+# the past these bugs have occurred because of the inconsistency
+# in delimeters and how datetimes are formatted
+
+na_dt <- detections.read_parse |>
+  filter(is.na(detection_datetime))
+
+# once th NA check is passed narrow to only
+# distinct values
+
+detections.read <- detections.read_parse |>
+  select(detection_datetime, internal_receiver_id, acoustic_tag_id, raw_sensor) |>
+  distinct()
+
 
 # join to acoustic id table so real sensor values
 # can be calculated for each detection, where applicable
