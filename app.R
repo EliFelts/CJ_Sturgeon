@@ -1,11 +1,26 @@
+# check that necessary packages are installed, if not
+# install them
+
+required_packages <- c(
+  "tidyverse", "shiny", "bslib", "bsicons",
+  "DT", "leaflet", "leafem", "arrow",
+  "shinyWidgets", "conflicted", "plotly",
+  "tidyr", "fontawesome", "scales",
+  "ggokabeito", "readr"
+)
+
+installed_packages <- rownames(installed.packages())
+
+for (pkg in required_packages) {
+  if (!pkg %in% installed_packages) {
+    install.packages(pkg)
+  }
+}
+
 library(shiny)
-library(stringr)
-library(dplyr)
-library(lubridate)
-library(ggplot2)
+library(tidyverse)
 library(leaflet)
 library(leafem)
-library(leaflet.minicharts)
 library(bslib)
 library(bsicons)
 library(conflicted)
