@@ -335,8 +335,8 @@ detection_fish.join <- detections_deployments.join %>%
     longitude = longitude.x
   )
 
-nodt <- detections_deployments.join |>
-  filter(is.na(detection_datetime))
+na_location <- detections_deployments.join |>
+  filter(is.na(location_id))
 
 # now add in some other categorizations for the detections
 # for season and whether at day versus night
