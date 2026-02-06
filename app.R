@@ -51,7 +51,8 @@ receiver_uniquefish <- read_feather("shiny_pieces/receiver_uniquefish")
 individual_summary <- read_feather("shiny_pieces/individual_summary") |>
   select(-.latest_idx)
 
-individual_daily_summary <- read_feather("shiny_pieces/individual_daily_summary")
+individual_daily_summary <- read_feather("shiny_pieces/individual_daily_summary") |>
+  mutate(location_id = factor(location_id))
 
 individual_dailydepth_summary <- read_feather("shiny_pieces/individual_dailydepth_summary")
 
@@ -106,6 +107,16 @@ pal_battery <- colorNumeric(
   domain = c(0, 100), # battery %
   na.color = "transparent"
 )
+
+
+location_pal <- c(
+  "CJ_STGALLEY_UPPER" = "#E69F00",
+  "CJ_STGALLEY_LOWER" = "#56B4E9",
+  "CJ_BOWL_UPPER" = "#009E73",
+  "CJ_BOWL_LOWER" = "#F0E442",
+  "CJ_HOMESTEAD" = "#0072B2"
+)
+
 
 # build user interface
 
@@ -289,8 +300,6 @@ server <- function(input, output, session) {
   )
 
 
-
-
   # make a reactive of the tagged fish based
   # on UI filters
 
@@ -301,7 +310,6 @@ server <- function(input, output, session) {
         status == "active"
       )
   })
-
 
 
   # make the value for number of active
@@ -324,7 +332,6 @@ server <- function(input, output, session) {
       str_c(unique(dat$species), collapse = ", ")
     )
   })
-
 
 
   # filter latest detections based on User
@@ -628,8 +635,11 @@ server <- function(input, output, session) {
             "Percent of Max:", round(count / detection_max * 100),
             sep = " "
           )
-        ),
-        show.legend = F
+        )
+      ) +
+      scale_fill_manual(
+        values = location_pal,
+        drop = FALSE
       ) +
       geom_hline(
         data = plot.dat,
@@ -657,12 +667,12 @@ server <- function(input, output, session) {
       ) +
       theme_bw() +
       labs(
-        x = "Detection Date", y = "Number of Detections"
+        x = "Detection Date", y = "Number of Detections",
+        fill = "Location"
       )
 
 
-    ggplotly(plot1, tooltip = c("text")) |>
-      layout(showlegend = FALSE)
+    ggplotly(plot1, tooltip = c("text"))
   })
 
   # make individual daily depth plot
@@ -872,8 +882,7 @@ server <- function(input, output, session) {
     req(nrow(plot_dat) > 0)
 
     receiver_plot <- ggplot(plot_dat, aes(
-      x = detection_date, y = detections,
-      fill = species
+      x = detection_date, y = detections
     )) +
       geom_rect(
         data = coverage.dat, aes(
