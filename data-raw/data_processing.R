@@ -15,8 +15,12 @@ library(readxl)
 library(suncalc)
 library(sf)
 library(tictoc)
-library(IDFGtelemetry)
 
+source("R/identify_cluster.R")
+source("R/interpolate_hourly.R")
+source("R/fish_animations.R")
+source("R/detect_delim.R")
+source("R/read_detections.R")
 
 
 # define the path to where shared files are stored (will change
