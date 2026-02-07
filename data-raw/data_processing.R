@@ -169,85 +169,14 @@ detections.files <- list.files(
 )
 
 
-# there are some defensive steps in the reading of the csv downloads
-# from the receivers; once in a great while some of these
-# have gotten saved as csv but they get stored without
-# the actual comma delimiter, so they don't get read in
-# properly; this helper function will identify the delimiter,
-# which has basically only ever been comma or tabs, and then
-# that information gets used to tell the read function
-# how to pull it in properly; another step is required because
-# some of the downloaded files are blank, which causes them
-# to get read in with different column types and then they
-# can't be bound together; withi the read function it will
-# drop those cases when it's just a blank csv; this initial
-# read also forces the date/time column to come in as a character
-# after which we want to parse the date/time
-
-detect_delim <- function(file) {
-  header <- readr::read_lines(file, n_max = 1)
-
-  counts <- c(
-    "," = str_count(header, fixed(",")),
-    ";" = str_count(header, fixed(";")),
-    "\t" = str_count(header, fixed("\t")),
-    "|" = str_count(header, fixed("|"))
-  )
-
-  names(which.max(counts))
-}
-
-read_one <- function(file) {
-  if (file.info(file)$size == 0) {
-    return(NULL)
-  }
-
-  delim <- detect_delim(file)
-
-  df <- readr::read_delim(
-    file,
-    delim = delim,
-    col_types = readr::cols(
-      `Date and Time (UTC)` = readr::col_character(), # FORCE character
-      Receiver = readr::col_character(),
-      Transmitter = readr::col_character(),
-      `Sensor Value` = readr::col_double(),
-      .default = readr::col_skip()
-    ),
-    show_col_types = FALSE,
-    progress = FALSE,
-    trim_ws = TRUE
-  )
-
-  if (nrow(df) == 0) {
-    return(NULL)
-  }
-
-  # schema check
-  required <- c("Date and Time (UTC)", "Receiver", "Transmitter", "Sensor Value")
-  missing <- setdiff(required, names(df))
-  if (length(missing) > 0) {
-    warning(
-      "Bad schema in ", basename(file), " (likely delimiter): missing ",
-      paste(missing, collapse = ", ")
-    )
-    return(NULL)
-  }
-
-  df %>%
-    transmute(
-      file = basename(file),
-      delim = delim,
-      dt_raw = `Date and Time (UTC)`,
-      internal_receiver_id = Receiver,
-      acoustic_tag_id = Transmitter,
-      raw_sensor = `Sensor Value`
-    )
-}
+# iterate to read in all detections; these helper
+# functions are used to make sure things like
+# weirdly formatted dates and delimeters don't
+# break the iteration and miss data
 
 # first step or reading all these detection files in
 
-detections.read_raw <- purrr::map_dfr(detections.files, read_one)
+detections.read_raw <- purrr::map_dfr(detections.files, read_detections)
 
 # parse the datetimes; these tend to get saved in two forms in
 # these files, so this is designed to work properly with
@@ -267,6 +196,7 @@ detections.read_parse <- detections.read_raw |>
 # the past these bugs have occurred because of the inconsistency
 # in delimeters and how datetimes are formatted
 
+
 na_dt <- detections.read_parse |>
   filter(is.na(detection_datetime))
 
@@ -276,7 +206,6 @@ na_dt <- detections.read_parse |>
 detections.read <- detections.read_parse |>
   select(detection_datetime, internal_receiver_id, acoustic_tag_id, raw_sensor) |>
   distinct()
-
 
 # join to acoustic id table so real sensor values
 # can be calculated for each detection, where applicable
@@ -726,3 +655,34 @@ write_feather(
   fish_detections.dat,
   "shiny_pieces/fish_detection_data"
 )
+
+# get hourly detections for every individual in the data set
+
+# drop flagged detections
+
+filtered_fish_detections <- fish_detections.dat |>
+  filter(!flag_false)
+
+# make a vector of each unique fish id
+
+unique_fish <- unique(filtered_fish_detections$fish_id)
+
+# interpolate hourly locations for every fish
+# across the range of dates during which they
+# were detected; this will take 5-10 minutes to run
+
+cj_network_points <- read_csv("data/cj_network_points.csv")
+
+hourly_fish_interpolated <- map_dfr(
+  unique_fish, ~ interpolate_hourly(
+    detections = filtered_fish_detections,
+    fish_id = .x,
+    paths = cj_network_points,
+    locations = deploy_locations.df
+  )
+) |>
+  mutate(
+    obs_date = as_date(detection_hour),
+    obs_year = year(obs_date),
+    species = word(fish_id, 3, sep = "_")
+  )
