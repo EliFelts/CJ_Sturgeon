@@ -686,3 +686,68 @@ hourly_fish_interpolated <- map_dfr(
     obs_year = year(obs_date),
     species = word(fish_id, 3, sep = "_")
   )
+
+# join interpolated locations to region
+
+cj_regions <- st_read("data/cj_telemetry_mapping.gpkg",
+  layer = "regions"
+)
+
+
+hourly_fish_region.join <- hourly_fish_interpolated |>
+  filter(!is.na(det_long)) |>
+  st_as_sf(
+    coords = c("det_long", "det_lat"),
+    crs = 4326
+  ) |>
+  st_join(cj_regions, join = st_intersects) |>
+  filter(!is.na(region)) |>
+  st_drop_geometry() |>
+  mutate(
+    obs_date = as_date(detection_hour),
+    region = factor(region)
+  )
+
+# write hourly locations joined to regions for future use,
+# this will cut out a step in building
+# animations
+
+write_feather(
+  hourly_fish_region.join,
+  "shiny_pieces/hourly_fish"
+)
+
+# now build base table for regional occupancy,
+# which is daily_region_summary
+
+daily_region_hours_all <- hourly_fish_region.join %>%
+  group_by(fish_id, obs_date, region) |>
+  summarize(
+    hours = n(),
+    .groups = "drop"
+  ) |>
+  mutate(fish_day = hours / 24)
+
+daily_region_summary_all <- daily_region_hours_all |>
+  group_by(obs_date, region, .drop = FALSE) %>%
+  summarise(fish_days = sum(fish_day), .groups = "drop") |>
+  group_by(obs_date) %>%
+  mutate(
+    region_prop = fish_days / sum(fish_days),
+    grand_fish_days = sum(fish_days), # QA: fish-days observed that day
+    obs_month_date = floor_date(obs_date, "month"),
+    obs_year = year(obs_date),
+    month_of_year = month(obs_date) # 1–12 for pooling across years
+  ) %>%
+  ungroup()
+
+write_feather(
+  daily_region_summary_all,
+  "shiny_pieces/daily_region_summary_all"
+)
+
+daily_nfish <- daily_region_hours_all %>%
+  group_by(obs_date) %>%
+  summarise(n_fish = n_distinct(fish_id), .groups = "drop")
+
+write_feather(daily_nfish, "shiny_pieces/daily_nfish")
