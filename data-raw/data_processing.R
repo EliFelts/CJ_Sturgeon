@@ -863,6 +863,7 @@ fish_month_bins_complete <- fish_month_bins %>%
   ungroup() |>
   mutate(
     month_of_year = month(month, label = T),
+    obs_month = month(month),
     obs_year = year(month)
   )
 

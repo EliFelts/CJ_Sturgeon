@@ -174,15 +174,6 @@ ui <- page_navbar(
       accordion(
         accordion_panel(
           "User Inputs",
-          pickerInput("species_filter",
-            label = "Choose one or more species",
-            choices = sort(unique(individual_summary$species)),
-            selected = "STG",
-            multiple = FALSE,
-            options = list(
-              `actions-box` = TRUE
-            )
-          ),
           pickerInput("month_filter",
             label = "Choose month(s)",
             choices = seq(1, 12, 1),
@@ -213,8 +204,8 @@ ui <- page_navbar(
           height = "65vh",
           full_screen = TRUE
         ),
-        card(card_header("Sample Size"),
-          plotlyOutput("nfish_plot"),
+        card(card_header("Depth Distribution"),
+          plotlyOutput("depth_plot"),
           height = "65vh",
           full_screen = TRUE
         )
@@ -371,6 +362,50 @@ server <- function(input, output, session) {
         decreasing = TRUE
       )
   })
+
+  # make a reactive depth summary object to feed
+  # into depth distribution plot
+
+  depth_summary_reactive <- reactive({
+    req(input$month_filter)
+
+    month_depth_dist <- fish_month_bins %>%
+      filter(obs_month %in% input$month_filter) |>
+      group_by(month_of_year, depth_bin) %>%
+      summarise(
+        mean_prop = mean(prop, na.rm = TRUE),
+        n_fish = n_distinct(fish_id),
+        .groups = "drop"
+      )
+  })
+
+  # render depth plot
+
+  output$depth_plot <- renderPlotly({
+    dat <- depth_summary_reactive()
+
+    plot1 <- dat |>
+      ggplot(aes(
+        x = month_of_year, y = mean_prop, fill = depth_bin,
+        text = str_c(
+          "<b>", "Month: ", "</b>", month_of_year,
+          "<br>",
+          "<b>", "Depth Bin (meters): ", "</b>", depth_bin,
+          "<br>",
+          "<b>", "Mean Proportion: ", "</b>", round(mean_prop, 2)
+        )
+      )) +
+      geom_col() +
+      theme_bw() +
+      labs(
+        x = "", fill = "Depth Bin (meters)",
+        y = "Proportion of hours at depth"
+      )
+    plot1
+
+    ggplotly(plot1, tooltip = "text")
+  })
+
 
   # make a reactive of the tagged fish based
   # on UI filters
