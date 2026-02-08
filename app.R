@@ -43,6 +43,10 @@ conflicts_prefer(
   DT::dataTableOutput()
 )
 
+# laod helper function for leaflet legend
+
+source("R/addLegend_decreasing.R")
+
 # read in shiny pieces
 
 
@@ -70,6 +74,20 @@ active_deployments_filters <- active_deployments |>
 location_coverage <- read_feather("shiny_pieces/location_coverage")
 
 lost_receivers <- read_feather("shiny_pieces/lost_receivers")
+
+
+daily_regional_summary <- read_feather("shiny_pieces/daily_region_summary_all")
+
+daily_nfish <- read_feather("shiny_pieces/daily_nfish") |>
+  mutate(
+    obs_month = month(obs_date),
+    obs_year = year(obs_date)
+  )
+
+cj_regions <- st_read("data/cj_telemetry_mapping.gpkg",
+  layer = "regions"
+) |>
+  mutate(region = factor(region))
 
 # build base leaflet map
 
@@ -163,7 +181,16 @@ ui <- page_navbar(
               `actions-box` = TRUE
             )
           ),
-          uiOutput("detection_slider")
+          pickerInput("month_filter",
+            label = "Choose month(s)",
+            choices = seq(1, 12, 1),
+            selected = seq(1, 12, 1),
+            multiple = TRUE,
+            options = list(
+              `actions-box` = TRUE,
+              `live-search` = TRUE
+            )
+          )
         )
       )
     ),
@@ -177,32 +204,15 @@ ui <- page_navbar(
   ),
   nav_panel(
     "Explore Fish Detections",
-    layout_columns(
-      value_box(
-        title = "Active Tags Today",
-        value = textOutput("activetags_text"),
-        textOutput("activetags_spp"),
-        textOutput("detection_count"),
-        showcase = icon("fish"),
-        max_height = "200px"
-      ),
-      value_box(
-        title = "Active Receivers",
-        value = nrow(active_deployments),
-        showcase = icon("headphones"),
-        max_height = "200px"
-      ),
-      value_box(
-        title = "Latest Detection",
-        value = textOutput("latest_det_value"),
-        showcase = bs_icon("cloud-download"),
-        max_height = "200px"
-      )
-    ),
     page_fillable(
       layout_columns(
-        card(card_header("Latest Detections"),
-          leafletOutput("latest_det_map"),
+        card(card_header("Occupancy by Region"),
+          leafletOutput("regional_occ_map"),
+          height = "65vh",
+          full_screen = TRUE
+        ),
+        card(card_header("Sample Size"),
+          plotlyOutput("nfish_plot"),
           height = "65vh",
           full_screen = TRUE
         )
@@ -299,6 +309,66 @@ server <- function(input, output, session) {
     ignoreInit = TRUE
   )
 
+  # make a reactive of the region summaries by
+  # user input filters
+
+  regional_summary_reactive <- reactive({
+    req(input$month_filter)
+
+    dat <- daily_regional_summary |>
+      filter(
+        month_of_year %in% input$month_filter
+      ) |>
+      group_by(region, .drop = FALSE) |>
+      summarise(
+        mean_prop = mean(region_prop, na.rm = TRUE),
+        n_days = n_distinct(obs_date),
+        n_years = n_distinct(obs_year),
+        .groups = "drop"
+      ) %>%
+      mutate(
+        mean_prop = mean_prop / sum(mean_prop),
+        percent = 100 * mean_prop
+      )
+  })
+
+  # make the reactive leaflet of regional occupancy
+  # shading for selections of species and month made
+  # by the user
+
+  output$regional_occ_map <- renderLeaflet({
+    dat <- regional_summary_reactive()
+
+    map.dat <- cj_regions |>
+      left_join(dat, by = "region")
+
+    vals <- map.dat$percent
+
+    pal_occ <- colorNumeric(
+      palette = viridisLite::plasma(256),
+      domain = range(vals, na.rm = TRUE),
+      na.color = "transparent"
+    )
+
+    leaflet_base |>
+      addPolygons(
+        data = map.dat,
+        fillColor = ~ pal_occ(percent),
+        fillOpacity = 0.5,
+        color = "white",
+        popup = ~ str_c(
+          "<b>", "Region: ", "</b>", region,
+          "<br>",
+          "<b>", "Occupancy: ", "</b>", round(percent), " %"
+        )
+      ) |>
+      addLegend_decreasing(
+        pal = pal_occ,
+        values = range(vals),
+        title = "Occupancy (%)",
+        decreasing = TRUE
+      )
+  })
 
   # make a reactive of the tagged fish based
   # on UI filters
