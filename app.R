@@ -89,6 +89,8 @@ cj_regions <- st_read("data/cj_telemetry_mapping.gpkg",
 ) |>
   mutate(region = factor(region))
 
+fish_month_bins <- read_feather("shiny_pieces/fish_month_bins")
+
 # build base leaflet map
 
 leaflet_base <- leaflet() %>%

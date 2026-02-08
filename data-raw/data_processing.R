@@ -7,14 +7,14 @@
 # load libraries
 
 
-# remotes::install_github("EliFelts/IDFGtelemetry", force=TRUE)
-
 library(tidyverse)
 library(arrow)
 library(readxl)
 library(suncalc)
 library(sf)
 library(tictoc)
+
+tic()
 
 source("R/identify_cluster.R")
 source("R/interpolate_hourly.R")
@@ -663,6 +663,15 @@ write_feather(
 filtered_fish_detections <- fish_detections.dat |>
   filter(!flag_false)
 
+
+# think about simultaneous detections
+
+simultaneous_fish_detections <- filtered_fish_detections |>
+  group_by(detection_datetime, fish_id) |>
+  mutate(count = n()) |>
+  filter(count > 1)
+
+
 # make a vector of each unique fish id
 
 unique_fish <- unique(filtered_fish_detections$fish_id)
@@ -751,3 +760,151 @@ daily_nfish <- daily_region_hours_all %>%
   summarise(n_fish = n_distinct(fish_id), .groups = "drop")
 
 write_feather(daily_nfish, "shiny_pieces/daily_nfish")
+
+toc()
+
+# depth stuff
+
+
+valid_depth_days <- filtered_fish_detections |>
+  filter(
+    !is.na(real_sensor),
+    sensor_type == "depth",
+    daylight_category == "day"
+  ) |>
+  mutate(detection_hour = floor_date(detection_datetime, "hour")) |>
+  group_by(detection_date, fish_id) |>
+  summarize(
+    total_count = n(),
+    unique_hours = n_distinct(detection_hour),
+    .groups = "drop"
+  ) |>
+  filter(unique_hours >= 3)
+
+# filter detections to those valid depth days
+
+valid_depth_detections <- filtered_fish_detections |>
+  semi_join(valid_depth_days, by = c("fish_id", "detection_date")) |>
+  filter(
+    sensor_type == "depth",
+    real_sensor < sensor_maximum
+  )
+
+depth_hist <- valid_depth_detections |>
+  ggplot() +
+  geom_histogram(aes(x = real_sensor))
+depth_hist
+
+ggplotly(depth_hist)
+
+# for each individual, collapse to a single depth
+# per hour on a given valid day
+
+hourly_depth_detections <- valid_depth_detections |>
+  mutate(detection_hour = floor_date(detection_datetime, "hour")) |>
+  group_by(fish_id, detection_date, detection_hour) |>
+  summarize(
+    median_depth = median(real_sensor),
+    .groups = "drop"
+  )
+
+# pull out an individual and see what that daily distributions
+# tend to look like
+
+hourly_distribution_depths <- valid_depth_detections |>
+  mutate(detection_hour = floor_date(detection_datetime, "hour")) |>
+  group_by(fish_id, detection_date, detection_hour) |>
+  summarize(
+    n_detections = n(),
+    min_depth = min(real_sensor),
+    max_depth = max(real_sensor),
+    median_depth = median(real_sensor),
+    range_depth = max_depth - min_depth
+  )
+
+
+# Define depth bins, just a starting point here
+
+depth_breaks <- c(0, 3, 6, 9, 12, 15, 18, 21, Inf)
+depth_labels <- c("0–3", "3-6", "6-9", "9-12", "12-15", "15-18", "18-21", "21+")
+
+hourly_depth_binned <- hourly_depth_detections %>%
+  mutate(
+    month = floor_date(detection_date, "month"),
+    depth_bin = cut(
+      median_depth,
+      breaks = depth_breaks,
+      labels = depth_labels,
+      include.lowest = TRUE,
+      right = FALSE
+    )
+  ) %>%
+  filter(!is.na(depth_bin))
+
+# proportion of hours by fish within a month
+# that were occupied at a given depth bin
+
+fish_month_bins <- hourly_depth_binned %>%
+  group_by(fish_id, month, depth_bin) %>%
+  summarise(hours = n(), .groups = "drop") %>%
+  group_by(fish_id, month) %>%
+  mutate(
+    total_hours = sum(hours),
+    prop = hours / total_hours
+  ) %>%
+  ungroup()
+
+# complete by filling in depth bins with
+# 0 if no observations
+
+fish_month_bins_complete <- fish_month_bins %>%
+  group_by(fish_id, month) %>%
+  complete(depth_bin, fill = list(hours = 0, prop = 0)) %>%
+  ungroup() |>
+  mutate(
+    month_of_year = month(month, label = T),
+    obs_year = year(month)
+  )
+
+# export this piece to be used
+# in the shiny app
+
+write_feather(fish_month_bins_complete, "shiny_pieces/fish_month_bins")
+
+month_depth_dist <- fish_month_bins_complete %>%
+  filter(obs_year %in% c(2024)) |>
+  group_by(month_of_year, depth_bin) %>%
+  summarise(
+    mean_prop = mean(prop, na.rm = TRUE),
+    n_fish = n_distinct(fish_id),
+    .groups = "drop"
+  )
+
+plot2 <- month_depth_dist |>
+  ggplot(aes(
+    x = month_of_year, y = mean_prop, fill = depth_bin,
+    text = str_c(
+      "<b>", "Month: ", "</b>", month_of_year,
+      "<br>",
+      "<b>", "Depth Bin (meters): ", "</b>", depth_bin,
+      "<br>",
+      "<b>", "Mean Proportion: ", "</b>", round(mean_prop, 2)
+    )
+  )) +
+  geom_col() +
+  theme_bw() +
+  labs(
+    x = "", fill = "Depth Bin (meters)",
+    y = "Proportion of hours at depth"
+  )
+plot2
+
+ggplotly(plot2, tooltip = "text")
+
+
+monthly.plot <- month_depth_dist |>
+  mutate(year = year(month)) |>
+  filter(year == 2024) |>
+  ggplot(aes(x = month, y = mean_prop, fill = depth_bin)) +
+  geom_col(width = 25)
+monthly.plot
