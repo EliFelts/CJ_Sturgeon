@@ -184,12 +184,52 @@ detections.read_raw <- purrr::map_dfr(detections.files, read_detections)
 
 detections.read_parse <- detections.read_raw |>
   mutate(
+    is_mdy = str_detect(dt_raw, "^\\d{1,2}/\\d{1,2}/\\d{4}"),
+    has_hms = str_detect(dt_raw, ":\\d{2}:\\d{2}\\s*$"),
     detection_datetime = parse_date_time(
       dt_raw,
-      orders = c("Y-m-d H:M:S", "m/d/Y H:M", "m/d/Y H:M:S"),
+      orders = c("Y-m-d H:M:S", "m/d/Y H:M:S", "m/d/Y H:M"),
       tz = "UTC"
-    )
+    ),
+    sec = second(detection_datetime)
   )
+
+# QAQC step for files that came through as different
+# datetime formats, need to make sure they didn't round
+# everything to the nearest minute
+
+file_dt_qa <- detections.read_parse |>
+  filter(!is.na(detection_datetime)) |>
+  group_by(file) |>
+  summarize(
+    n = n(),
+    n_mdy = sum(is_mdy),
+    prop_sec0 = mean(sec == 0, na.rm = T),
+    .groups = "drop"
+  ) |>
+  mutate(minute_rounded_flag = prop_sec0 > 0.995) |>
+  select(file, minute_rounded_flag)
+
+# Join that QA flag back in to all detections; this will be
+# used to retain the rounded values if there are not
+# subsequent detections if they were later downloaded,
+# or keep them if they're all that's available
+
+detections.read_parse2 <- detections.read_parse |>
+  left_join(file_dt_qa, by = "file") |>
+  mutate(
+    dt_min = floor_date(detection_datetime, "minute"),
+    dt_for_dedupe = if_else(minute_rounded_flag, dt_min, detection_datetime)
+  ) |>
+  group_by(internal_receiver_id, acoustic_tag_id, dt_min) |>
+  mutate(minute_det_count = n())
+
+# deduplicate when there are more than 1 detections
+# per minute and one of the sources is a file
+# that has rounded detection datetimes
+
+detections.deduped <- detections.read_parse2 |>
+  filter(!(minute_rounded_flag & minute_det_count > 1))
 
 # search for any NA in detection_datetime; there should
 # be none, but if there is it needs to be diagnosed; in
@@ -197,13 +237,14 @@ detections.read_parse <- detections.read_raw |>
 # in delimeters and how datetimes are formatted
 
 
-na_dt <- detections.read_parse |>
+na_dt <- detections.deduped |>
   filter(is.na(detection_datetime))
 
 # once th NA check is passed narrow to only
 # distinct values
 
-detections.read <- detections.read_parse |>
+detections.read <- detections.deduped |>
+  ungroup() |>
   select(detection_datetime, internal_receiver_id, acoustic_tag_id, raw_sensor) |>
   distinct()
 
@@ -515,6 +556,32 @@ individual_dailydepth.summary <- fish_detections.dat |>
 
 write_feather(individual_dailydepth.summary, "shiny_pieces/individual_dailydepth_summary")
 
+
+daily_search <- fish_detections.dat %>%
+  filter(
+    !flag_false,
+    fish_id == "1554691_2023-06-28_STG",
+    detection_date == as_date("2023-08-04")
+  )
+
+raw_search <- read_detections("/Users/elifelts/Library/CloudStorage/OneDrive-SunnysideInsights/CJ_Telemetry_Sync/detection_csv/VR2Tx_489806_20231016_3.csv") #|>
+mutate(detection_datetime = parse_date_time(
+  dt_raw,
+  orders = c("Y-m-d H:M:S", "m/d/Y H:M:S", "m/d/Y H:M"),
+  tz = "UTC"
+)) # |>
+filter(acoustic_tag_id %in% c("A69-9004-6772", "A69-9004-6773"))
+
+
+raw_search2 <- read_detections("/Users/elifelts/Library/CloudStorage/OneDrive-SunnysideInsights/CJ_Telemetry_Sync/detection_csv/VR2Tx_489806_20240422_2.csv") |>
+  mutate(detection_datetime = parse_date_time(
+    dt_raw,
+    orders = c("Y-m-d H:M:S", "m/d/Y H:M:S", "m/d/Y H:M"),
+    tz = "UTC"
+  )) |>
+  filter(acoustic_tag_id %in% c("A69-9004-6772", "A69-9004-6773"))
+
+
 # summarize daily detections by location for individuals
 
 individual_daily.summary <- fish_detections.dat %>%
@@ -761,7 +828,6 @@ daily_nfish <- daily_region_hours_all %>%
 
 write_feather(daily_nfish, "shiny_pieces/daily_nfish")
 
-toc()
 
 # depth stuff
 
@@ -789,13 +855,6 @@ valid_depth_detections <- filtered_fish_detections |>
     sensor_type == "depth",
     real_sensor < sensor_maximum
   )
-
-depth_hist <- valid_depth_detections |>
-  ggplot() +
-  geom_histogram(aes(x = real_sensor))
-depth_hist
-
-ggplotly(depth_hist)
 
 # for each individual, collapse to a single depth
 # per hour on a given valid day
