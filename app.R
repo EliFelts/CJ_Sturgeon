@@ -6,7 +6,7 @@ required_packages <- c(
   "DT", "leaflet", "leafem", "arrow",
   "shinyWidgets", "conflicted", "plotly",
   "tidyr", "fontawesome", "scales",
-  "ggokabeito", "readr"
+  "ggokabeito", "readr", "sf"
 )
 
 installed_packages <- rownames(installed.packages())
@@ -33,6 +33,7 @@ library(fontawesome)
 library(scales)
 library(readr)
 library(ggokabeito)
+library(sf)
 
 conflicts_prefer(
   DT::renderDT,
@@ -75,6 +76,8 @@ location_coverage <- read_feather("shiny_pieces/location_coverage")
 
 lost_receivers <- read_feather("shiny_pieces/lost_receivers")
 
+daily_region_hours_all <- read_feather("shiny_pieces/daily_region_hours_all") |>
+  mutate(month_of_year = month(obs_date))
 
 daily_regional_summary <- read_feather("shiny_pieces/daily_region_summary_all")
 
@@ -188,7 +191,22 @@ ui <- page_navbar(
       )
     ),
     conditionalPanel(
-      "input.nav==`Explore Individuals`"
+      "input.nav==`Explore Individuals`",
+      accordion(
+        accordion_panel(
+          "User Inputs",
+          pickerInput("ind_month_filter",
+            label = "Choose month(s)",
+            choices = seq(1, 12, 1),
+            selected = seq(1, 12, 1),
+            multiple = TRUE,
+            options = list(
+              `actions-box` = TRUE,
+              `live-search` = TRUE
+            )
+          )
+        )
+      )
     ),
     conditionalPanel(
       "input.nav==`Deployment Diagnostics`",
@@ -651,6 +669,33 @@ server <- function(input, output, session) {
 
   selected_individual <- reactiveVal(NULL)
 
+
+  # make regional summaries of individuals react to selected
+  # individual and months
+
+  individual_occ_reactive <- reactive({
+    req(individual_reactive())
+
+    dat <- individual_reactive()
+
+    output <- daily_region_hours_all %>%
+      filter(
+        fish_id %in% dat$fish_id,
+        month_of_year %in% input$ind_month_filter
+      ) |>
+      mutate(total_fish_days = sum(fish_day)) |>
+      group_by(region, .drop = F) |>
+      summarize(
+        region_fish_days = sum(fish_day),
+        total_fish_days = first(total_fish_days),
+        region_prop = region_fish_days / total_fish_days
+      ) |>
+      mutate(across(total_fish_days:region_prop, ~ replace_na(.x, 0)),
+        percent = 100 * region_prop
+      )
+  })
+
+
   # make the observer to update the individual
   # map reactively
 
@@ -665,11 +710,36 @@ server <- function(input, output, session) {
 
     dat <- individual_summary_reactive()
 
+    region.dat <- individual_occ_reactive()
+
     map.dat <- individual_receiver_summary %>%
       filter(fish_id == dat$fish_id)
 
+    occ.dat <- cj_regions |>
+      left_join(region.dat, by = "region")
+
+    vals <- occ.dat$percent
+
+    pal_occ <- colorNumeric(
+      palette = viridisLite::plasma(256),
+      domain = range(vals, na.rm = TRUE),
+      na.color = "transparent"
+    )
+
+
     leafletProxy("individual_map") %>%
       clearGroup("selection") %>%
+      addPolygons(
+        data = occ.dat,
+        fillColor = ~ pal_occ(percent),
+        fillOpacity = 0.5,
+        color = "white",
+        popup = ~ str_c(
+          "<b>", "Region: ", "</b>", region,
+          "<br>",
+          "<b>", "Occupancy: ", "</b>", round(percent), " %"
+        )
+      ) |>
       addCircleMarkers(
         data = map.dat,
         lng = ~longitude,
@@ -689,6 +759,12 @@ server <- function(input, output, session) {
           "<br>",
           "<b>", "Total Detections: ", "</b>", comma(detections)
         )
+      ) |>
+      addLegend_decreasing(
+        pal = pal_occ,
+        values = range(vals),
+        title = "Occupancy (%)",
+        decreasing = TRUE
       )
   })
 
