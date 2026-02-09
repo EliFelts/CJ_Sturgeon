@@ -14,8 +14,6 @@ library(suncalc)
 library(sf)
 library(tictoc)
 
-tic()
-
 source("R/identify_cluster.R")
 source("R/interpolate_hourly.R")
 source("R/fish_animations.R")
@@ -556,32 +554,6 @@ individual_dailydepth.summary <- fish_detections.dat |>
 
 write_feather(individual_dailydepth.summary, "shiny_pieces/individual_dailydepth_summary")
 
-
-daily_search <- fish_detections.dat %>%
-  filter(
-    !flag_false,
-    fish_id == "1554691_2023-06-28_STG",
-    detection_date == as_date("2023-08-04")
-  )
-
-raw_search <- read_detections("/Users/elifelts/Library/CloudStorage/OneDrive-SunnysideInsights/CJ_Telemetry_Sync/detection_csv/VR2Tx_489806_20231016_3.csv") #|>
-mutate(detection_datetime = parse_date_time(
-  dt_raw,
-  orders = c("Y-m-d H:M:S", "m/d/Y H:M:S", "m/d/Y H:M"),
-  tz = "UTC"
-)) # |>
-filter(acoustic_tag_id %in% c("A69-9004-6772", "A69-9004-6773"))
-
-
-raw_search2 <- read_detections("/Users/elifelts/Library/CloudStorage/OneDrive-SunnysideInsights/CJ_Telemetry_Sync/detection_csv/VR2Tx_489806_20240422_2.csv") |>
-  mutate(detection_datetime = parse_date_time(
-    dt_raw,
-    orders = c("Y-m-d H:M:S", "m/d/Y H:M:S", "m/d/Y H:M"),
-    tz = "UTC"
-  )) |>
-  filter(acoustic_tag_id %in% c("A69-9004-6772", "A69-9004-6773"))
-
-
 # summarize daily detections by location for individuals
 
 individual_daily.summary <- fish_detections.dat %>%
@@ -930,41 +902,3 @@ fish_month_bins_complete <- fish_month_bins %>%
 # in the shiny app
 
 write_feather(fish_month_bins_complete, "shiny_pieces/fish_month_bins")
-
-month_depth_dist <- fish_month_bins_complete %>%
-  filter(obs_year %in% c(2024)) |>
-  group_by(month_of_year, depth_bin) %>%
-  summarise(
-    mean_prop = mean(prop, na.rm = TRUE),
-    n_fish = n_distinct(fish_id),
-    .groups = "drop"
-  )
-
-plot2 <- month_depth_dist |>
-  ggplot(aes(
-    x = month_of_year, y = mean_prop, fill = depth_bin,
-    text = str_c(
-      "<b>", "Month: ", "</b>", month_of_year,
-      "<br>",
-      "<b>", "Depth Bin (meters): ", "</b>", depth_bin,
-      "<br>",
-      "<b>", "Mean Proportion: ", "</b>", round(mean_prop, 2)
-    )
-  )) +
-  geom_col() +
-  theme_bw() +
-  labs(
-    x = "", fill = "Depth Bin (meters)",
-    y = "Proportion of hours at depth"
-  )
-plot2
-
-ggplotly(plot2, tooltip = "text")
-
-
-monthly.plot <- month_depth_dist |>
-  mutate(year = year(month)) |>
-  filter(year == 2024) |>
-  ggplot(aes(x = month, y = mean_prop, fill = depth_bin)) +
-  geom_col(width = 25)
-monthly.plot
