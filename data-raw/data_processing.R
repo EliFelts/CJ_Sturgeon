@@ -14,6 +14,8 @@ library(suncalc)
 library(sf)
 library(tictoc)
 
+tic()
+
 source("R/identify_cluster.R")
 source("R/interpolate_hourly.R")
 source("R/fish_animations.R")
@@ -703,14 +705,6 @@ filtered_fish_detections <- fish_detections.dat |>
   filter(!flag_false)
 
 
-# think about simultaneous detections
-
-simultaneous_fish_detections <- filtered_fish_detections |>
-  group_by(detection_datetime, fish_id) |>
-  mutate(count = n()) |>
-  filter(count > 1)
-
-
 # make a vector of each unique fish id
 
 unique_fish <- unique(filtered_fish_detections$fish_id)
@@ -776,6 +770,26 @@ daily_region_hours_all <- hourly_fish_region.join %>%
   ) |>
   mutate(fish_day = hours / 24)
 
+write_feather(
+  daily_region_hours_all,
+  "shiny_pieces/daily_region_hours_all"
+)
+
+ind_region_test <- daily_region_hours_all |>
+  filter(fish_id == "1554677_2023-08-09_STG") |>
+  mutate(month_of_year = month(obs_date)) |>
+  filter(month_of_year == 7) |>
+  group_by(month_of_year) |>
+  mutate(total_fish_days = sum(fish_day)) |>
+  group_by(month_of_year, region, .drop = F) |>
+  summarize(
+    region_fish_days = sum(fish_day),
+    total_fish_days = first(total_fish_days),
+    region_prop = region_fish_days / total_fish_days
+  ) |>
+  mutate(across(total_fish_days:region_prop, ~ replace_na(.x, 0)))
+
+
 daily_region_summary_all <- daily_region_hours_all |>
   group_by(obs_date, region, .drop = FALSE) %>%
   summarise(fish_days = sum(fish_day), .groups = "drop") |>
@@ -819,14 +833,24 @@ valid_depth_days <- filtered_fish_detections |>
   ) |>
   filter(unique_hours >= 3)
 
-# filter detections to those valid depth days
+# filter detections to those valid depth days and then
+# reduce so simultaneous detections are deduplicated;
+# just taking first in those instances because the location
+# doesn't matter, the depth will be the same; also, for any
+# with a negative depth reading, make it slightly positive
+# for ease of depth bin calculations
+
 
 valid_depth_detections <- filtered_fish_detections |>
   semi_join(valid_depth_days, by = c("fish_id", "detection_date")) |>
   filter(
     sensor_type == "depth",
     real_sensor < sensor_maximum
-  )
+  ) |>
+  group_by(detection_datetime, fish_id) |>
+  slice(1) |>
+  ungroup() |>
+  mutate(real_sensor = if_else(real_sensor < 0, 0.01, real_sensor))
 
 # for each individual, collapse to a single depth
 # per hour on a given valid day
@@ -902,3 +926,5 @@ fish_month_bins_complete <- fish_month_bins %>%
 # in the shiny app
 
 write_feather(fish_month_bins_complete, "shiny_pieces/fish_month_bins")
+
+toc()
