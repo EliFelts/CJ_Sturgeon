@@ -669,28 +669,36 @@ server <- function(input, output, session) {
 
   selected_individual <- reactiveVal(NULL)
 
+  observeEvent(input$individual_table1_rows_selected,
+    {
+      req(input$individual_table1_rows_selected)
+
+      dat <- individual_summary_reactive() # must return the selected fish row
+      req(nrow(dat) == 1)
+
+      selected_individual(dat$fish_id)
+    },
+    ignoreInit = TRUE
+  )
 
   # make regional summaries of individuals react to selected
   # individual and months
 
   individual_occ_reactive <- reactive({
-    req(individual_reactive())
+    req(selected_individual(), input$ind_month_filter)
 
-    dat <- individual_reactive()
-
-    output <- daily_region_hours_all %>%
+    daily_region_hours_all %>%
       filter(
-        fish_id %in% dat$fish_id,
+        fish_id == selected_individual(),
         month_of_year %in% input$ind_month_filter
       ) |>
-      mutate(total_fish_days = sum(fish_day)) |>
       group_by(region, .drop = F) |>
       summarize(
-        region_fish_days = sum(fish_day),
-        total_fish_days = first(total_fish_days),
-        region_prop = region_fish_days / total_fish_days
+        region_fish_days = sum(fish_day), .groups = "drop"
       ) |>
-      mutate(across(total_fish_days:region_prop, ~ replace_na(.x, 0)),
+      mutate(
+        total_fish_days = sum(region_fish_days),
+        region_prop = if_else(total_fish_days > 0, region_fish_days / total_fish_days, 0),
         percent = 100 * region_prop
       )
   })
@@ -699,74 +707,78 @@ server <- function(input, output, session) {
   # make the observer to update the individual
   # map reactively
 
-  observeEvent(input$individual_table1_rows_selected, {
-    req(input$individual_table1_rows_selected)
+  observeEvent(list(selected_individual(), input$ind_month_filter),
+    {
+      req(selected_individual())
 
-    # selected_fish <- input$individual_table1_rows_selected
-    #
-    # current <- input$individual_table1_rows_current
-    #
-    # row_idx <- if (length(current)) current[selected_fish] else selected_fish
+      # selected_fish <- input$individual_table1_rows_selected
+      #
+      # current <- input$individual_table1_rows_current
+      #
+      # row_idx <- if (length(current)) current[selected_fish] else selected_fish
 
-    dat <- individual_summary_reactive()
+      region.dat <- individual_occ_reactive()
 
-    region.dat <- individual_occ_reactive()
+      map.dat <- individual_receiver_summary %>%
+        filter(fish_id == selected_individual())
 
-    map.dat <- individual_receiver_summary %>%
-      filter(fish_id == dat$fish_id)
+      occ.dat <- cj_regions |>
+        left_join(region.dat, by = "region")
 
-    occ.dat <- cj_regions |>
-      left_join(region.dat, by = "region")
+      vals <- occ.dat$percent
 
-    vals <- occ.dat$percent
-
-    pal_occ <- colorNumeric(
-      palette = viridisLite::plasma(256),
-      domain = range(vals, na.rm = TRUE),
-      na.color = "transparent"
-    )
-
-
-    leafletProxy("individual_map") %>%
-      clearGroup("selection") %>%
-      addPolygons(
-        data = occ.dat,
-        fillColor = ~ pal_occ(percent),
-        fillOpacity = 0.5,
-        color = "white",
-        popup = ~ str_c(
-          "<b>", "Region: ", "</b>", region,
-          "<br>",
-          "<b>", "Occupancy: ", "</b>", round(percent), " %"
-        )
-      ) |>
-      addCircleMarkers(
-        data = map.dat,
-        lng = ~longitude,
-        lat = ~latitude,
-        fillColor = ~ recent_pal(recent_status),
-        color = ~ recent_pal(recent_status),
-        fillOpacity = 0.8,
-        group = "selection",
-        popup = ~ str_c(
-          "<b>", "Location ID: ", "</b>", location_id,
-          "<br>",
-          "<b>", "Earliest: ", "</b>", earliest_date,
-          "<br>",
-          "<b>", "Latest: ", "</b>", latest_date,
-          "<br>",
-          "<b>", "Unique Days: ", "</b>", unique_days,
-          "<br>",
-          "<b>", "Total Detections: ", "</b>", comma(detections)
-        )
-      ) |>
-      addLegend_decreasing(
-        pal = pal_occ,
-        values = range(vals),
-        title = "Occupancy (%)",
-        decreasing = TRUE
+      pal_occ <- colorNumeric(
+        palette = viridisLite::plasma(256),
+        domain = range(vals, na.rm = TRUE),
+        na.color = "transparent"
       )
-  })
+
+
+      leafletProxy("individual_map") %>%
+        clearGroup("occ") |>
+        clearGroup("selection") %>%
+        clearControls() |>
+        addPolygons(
+          data = occ.dat,
+          fillColor = ~ pal_occ(percent),
+          fillOpacity = 0.5,
+          color = "white",
+          group = "occ",
+          popup = ~ str_c(
+            "<b>", "Region: ", "</b>", region,
+            "<br>",
+            "<b>", "Occupancy: ", "</b>", round(percent), " %"
+          )
+        ) |>
+        addCircleMarkers(
+          data = map.dat,
+          lng = ~longitude,
+          lat = ~latitude,
+          fillColor = ~ recent_pal(recent_status),
+          color = ~ recent_pal(recent_status),
+          fillOpacity = 0.8,
+          group = "selection",
+          popup = ~ str_c(
+            "<b>", "Location ID: ", "</b>", location_id,
+            "<br>",
+            "<b>", "Earliest: ", "</b>", earliest_date,
+            "<br>",
+            "<b>", "Latest: ", "</b>", latest_date,
+            "<br>",
+            "<b>", "Unique Days: ", "</b>", unique_days,
+            "<br>",
+            "<b>", "Total Detections: ", "</b>", comma(detections)
+          )
+        ) |>
+        addLegend_decreasing(
+          pal = pal_occ,
+          values = range(vals),
+          title = "Occupancy (%)",
+          decreasing = TRUE
+        )
+    },
+    ignoreNULL = T
+  )
 
   # make a plot of daily detections for selected individual
 
