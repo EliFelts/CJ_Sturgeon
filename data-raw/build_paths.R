@@ -362,9 +362,19 @@ for (i in seq_len(n)) {
 # that's attached to the package be a
 # simple table and not an sf object
 
+
+# join points to regions; use buffered polygon
+# and fill in holes in clark fork delta for
+# spatial joining purposes
+
+cj_regions <- st_read("data/cj_telemetry_mapping.gpkg",
+  layer = "regions"
+)
+
 cj_network_points <- st_read("data-raw/all_paths.gpkg",
   layer = "cj_paths_pts"
 ) |>
+  st_join(cj_regions, join = st_intersects) |>
   mutate(
     rkm = dist_m / 1000,
     longitude = st_coordinates(geom)[, 1],
@@ -372,4 +382,5 @@ cj_network_points <- st_read("data-raw/all_paths.gpkg",
   ) |>
   st_drop_geometry()
 
-write_csv(cj_network_points, "cj_network_points.csv")
+
+write_csv(cj_network_points, "data-raw/cj_network_points.csv")
