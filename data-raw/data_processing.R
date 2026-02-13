@@ -29,9 +29,18 @@ source("R/read_detections.R")
 
 shared_parent.dir <- "~/Library/CloudStorage/OneDrive-SunnysideInsights/CJ_Telemetry_Sync"
 
+# read in deployment locations and join to regions
+
+cj_regions <- st_read("data/cj_telemetry_mapping.gpkg",
+  layer = "regions"
+)
+
 # Read in deployment locations
 
-deploy_locations.df <- read_excel(path = str_c(shared_parent.dir, "deployment_locations.xlsx", sep = "/"))
+deploy_locations.df <- read_excel(path = str_c(shared_parent.dir, "deployment_locations.xlsx", sep = "/")) |>
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326, remove = F) |>
+  st_join(cj_regions, join = st_nearest_feature) |>
+  st_drop_geometry()
 
 # Read in deployments and join to locations; drop any that
 # are not in CJ or don't have a start_datetime; also,
@@ -729,40 +738,35 @@ hourly_fish_interpolated <- map_dfr(
     species = word(fish_id, 3, sep = "_")
   )
 
-# join interpolated locations to region
-
-cj_regions <- st_read("data/cj_telemetry_mapping.gpkg",
-  layer = "regions"
-)
 
 
-hourly_fish_region.join <- hourly_fish_interpolated |>
-  filter(!is.na(det_long)) |>
-  st_as_sf(
-    coords = c("det_long", "det_lat"),
-    crs = 4326
-  ) |>
-  st_join(cj_regions, join = st_intersects) |>
-  filter(!is.na(region)) |>
-  st_drop_geometry() |>
-  mutate(
-    obs_date = as_date(detection_hour),
-    region = factor(region)
-  )
-
-# write hourly locations joined to regions for future use,
-# this will cut out a step in building
-# animations
-
-write_feather(
-  hourly_fish_region.join,
-  "shiny_pieces/hourly_fish"
-)
+# hourly_fish_region.join <- hourly_fish_interpolated |>
+#   filter(!is.na(det_long)) |>
+#   st_as_sf(
+#     coords = c("det_long", "det_lat"),
+#     crs = 4326
+#   ) |>
+#   st_join(cj_regions, join = st_intersects) |>
+#   filter(!is.na(region)) |>
+#   st_drop_geometry() |>
+#   mutate(
+#     obs_date = as_date(detection_hour),
+#     region = factor(region)
+#   )
+#
+# # write hourly locations joined to regions for future use,
+# # this will cut out a step in building
+# # animations
+#
+# write_feather(
+#   hourly_fish_region.join,
+#   "shiny_pieces/hourly_fish"
+# )
 
 # now build base table for regional occupancy,
 # which is daily_region_summary
 
-daily_region_hours_all <- hourly_fish_region.join %>%
+daily_region_hours_all <- hourly_fish_interpolated %>%
   group_by(fish_id, obs_date, region) |>
   summarize(
     hours = n(),
@@ -774,21 +778,6 @@ write_feather(
   daily_region_hours_all,
   "shiny_pieces/daily_region_hours_all"
 )
-
-ind_region_test <- daily_region_hours_all |>
-  filter(fish_id == "1554677_2023-08-09_STG") |>
-  mutate(month_of_year = month(obs_date)) |>
-  filter(month_of_year == 7) |>
-  group_by(month_of_year) |>
-  mutate(total_fish_days = sum(fish_day)) |>
-  group_by(month_of_year, region, .drop = F) |>
-  summarize(
-    region_fish_days = sum(fish_day),
-    total_fish_days = first(total_fish_days),
-    region_prop = region_fish_days / total_fish_days
-  ) |>
-  mutate(across(total_fish_days:region_prop, ~ replace_na(.x, 0)))
-
 
 daily_region_summary_all <- daily_region_hours_all |>
   group_by(obs_date, region, .drop = FALSE) %>%
