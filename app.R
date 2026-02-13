@@ -34,6 +34,8 @@ library(scales)
 library(readr)
 library(ggokabeito)
 library(sf)
+library(markdown)
+
 
 conflicts_prefer(
   DT::renderDT,
@@ -305,6 +307,14 @@ ui <- page_navbar(
           height = "65vh"
         )
       )
+    )
+  ),
+  nav_panel(
+    "About",
+    tags$iframe(
+      src = "about.html",
+      width = "100%",
+      height = "100%"
     )
   )
 )

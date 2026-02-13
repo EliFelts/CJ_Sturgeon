@@ -1,0 +1,53 @@
+---
+title: "About This App and Estimation Methods"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: false
+---
+
+
+## Page Navigation and Features
+
+### Explore Fish Detections Page
+
+For groups of fish, this page displays regional occupancy expressed in percent of fish hours within given regions, and depth distribution expressed in proportion of time spent at various depth bins. Users can filter on months and years. The years available in the dropdown menu will only include years for which all of the months selected in the month dropdown menu are available.
+
+### Explore Individuals Page
+
+For individual fish, explore summary data in Individual Fish Summaries Table. To populate Selection Map, Daily Detection Count, and Daily Median Depth, select an individual in the table. The selection map will show regional occupancy for that individual fish and also points for all receivers it has been detected. The most recent receiver will be highlighted. These points can be clicked to view summaries of that fish's history at a given location. Daily Detection Count is a stacked bar of daily detections by location for the selected individual. The dashed horizontal line is the maximum number of detections there should be in a day based on the mean ping rate. The blue vertical dashed line is the initial release date, and if the fish has been censored there will be a red vertical dashed line at the censor date. The details of the various reference lines will popup if you hover your mouse over the base of the line (near the bottom for vertical lines and left for horizontal line). For right censored fish, the popup will also indicate the reason the fish was censored (e.g. known mortality, battery life ended, etc.). Daily Median Depth shows daily points for the median depth; hovering the mouse over any of these points will show a popup of summaries for that day including the date, min, median, max and total number of detections. Points will appear red if they occur at depths greater than the specified sensor range of the transmitter. The blue vertical dashed line is the initial release date just as in the Daily Detection Count plot.
+
+### Deployment Diagnostics Page
+
+The initial map on the left panel will show all locations where receivers have been deployed with active locations shown in blue. Locations can be selected by clicking the points on the map. This will populate a box in the upper right hand corner with metadata about which receivers have been deployed at that location and when the latest detection occurred. A plot of the number of daily detections at each location will show up in the right panel. A grey rectangle is displayed behind these detections to show when there was an active deployment at the location; this will not be very apparent if there are no gaps in coverage but will show them if they occurred.
+
+## Interactive Features
+
+## Panels
+
+All panels can be expanded to full screen by clicking on the icon in lower right hand corner. These can be collapsed back to their originaly size either by clicking the "Close" button in the upper right hand corner or pressing the "Esc" button.
+
+### Maps
+
+All map panels allow zooming by using the button in the upper left corner or using the scroll wheel on your mouse. Different base layers are available for toggling from the menu in the upper right hand corner. On regional occupancy maps, the various regions can be clicked to view the occupancy estimate.
+
+### Plots
+
+All plotted objects have metadata that appears when the mouse cursor is hovered over them. There are a number of interactive options that appear in the upper right hand corner. Zoom to various regions of the plots using the buttons in that menu or by drawing a rectangle around the region of interest. After zooming, to return to the original view either press the "reset axes" button which looks like a house, or double click within the plot. For stacked bar charts, toggling to "Compare data on hover" can be a useful feature as the popup metadata will appear for each portion of the stacked bar. Various legend items can be isolated by double clicking in the legend. For example, to view just one location in the Explore Individuals Daily Detection Count plot, double click on one location in the legend, and double click again to restore all groups. Similarly, individual groups can be toggle on or off with a single click in the legend.
+
+## Estimation Methods
+
+Two main metrics are reported in this app for visualization purposes, regional occupancy and depth distribution
+
+### Regional Occupancy
+
+The starting point for this estimate was detections of individuals that have been screened for potential false, singleton detections. Those are detections that occur in isolation from any others for a transmitter/receiver combination; the criteria used here for isolation were those that did not have any other detections for that combination within 30x the nominal delay of the transmitter. So, for a transmitter with a nominal delay of 180 s that would mean a "singleton" detection is one that had no others at that transmitter/receiver combination within 5400 s (i.e. 30 X 180). All of these flagged singleton detections were dropped from further analysis.
+
+Filtered detections were then used to interpolated hourly detections. All detection time stamps were rounded to the nearest hour, and on hours when the fish was actually detected they were assigned to that location. If detected at multiple locations within the same hour, the first location was used. For hours during which an individual was not observed two options existed. First, if their next actual detection was at the same location as the previous then they were assumed to have not moved. Second, if if their next actual detection was at a different location then they're assumed to have moved at a constant rate across the hours they were at large; so, with those a rate of travel was calculated and used to estimate how far along the least cost path (i.e. staying within the water) between the two receiver the fish was at any hour time step and snapped to the nearest 0.1 km based on that estimate. The network of 0.1 km points along least cost paths was also joined to region polygons so each of these interpolated points was associated with a region.
+
+Regional occupancy was quantified using a time-weighted approach based on inferred hourly locations. For each individual and day, the number of hours inferred in each region was divided by 24 to yield fish-days per region, such that each active individual contributed one fish-day per calendar day it was active. Daily regional fish-days were then summed across individuals to calculate the proportion of total active fish-days occurring in each region on that day. Monthly regional occupancy was calculated as the mean of daily regional proportions across all days within the selected months and years. This equal-day weighting approach prevents days with larger numbers of active fish from disproportionately influencing monthly summaries. Final regional proportions were scaled to sum to one across regions.
+
+### Depth Distribution
+
+Depth analysis was restricted to fish-days with detections occurring during at least three unique hours to ensure minimum temporal coverage. To reduce the influence of temporal autocorrelation associated with repeated detections, depth observations were summarized at an hourly time step by calculating the median depth for each individual within each hour. Hourly median depths were assigned to predefined depth bins, and depth use was summarized at the individual-month level as the proportion of observed hours spent within each depth bin. These proportions were calculated by dividing the number of hours an individual's hourly median depth fell within a given depth bin by the total number of observed hours for that individual within the month. Population-level monthly depth distributions were then obtained by averaging individual-level proportions across all individuals observed within each month.
