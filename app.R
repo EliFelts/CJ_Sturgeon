@@ -881,7 +881,12 @@ server <- function(input, output, session) {
         ),
         linetype = "dashed", color = "blue"
       ) +
+      scale_x_date(
+        date_breaks = "1 month",
+        date_labels = "%b %y"
+      ) +
       theme_bw() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
       labs(
         x = "Detection Date", y = "Number of Detections",
         fill = "Location"
@@ -919,9 +924,22 @@ server <- function(input, output, session) {
         )),
         show.legend = F
       ) +
+      geom_vline(
+        data = dat,
+        aes(
+          xintercept = release_datetime,
+          text = str_c("Release Date: ", as_date(release_datetime))
+        ),
+        linetype = "dashed", color = "blue"
+      ) +
       scale_color_manual(values = c(exceed = "red", normal = "black")) +
       scale_y_reverse(limits = c(NA, 0)) +
+      scale_x_date(
+        date_breaks = "1 month",
+        date_labels = "%b %y"
+      ) +
       theme_bw() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
       labs(x = "Detection Date", y = "Median Depth (ft)")
 
 
