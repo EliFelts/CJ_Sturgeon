@@ -81,6 +81,9 @@ daily_region_hours_all <- read_feather("shiny_pieces/daily_region_hours_all") |>
 
 daily_regional_summary <- read_feather("shiny_pieces/daily_region_summary_all")
 
+
+sel_months.test <- sort(unique(as.integer(seq(1, 12, 1))))
+
 daily_nfish <- read_feather("shiny_pieces/daily_nfish") |>
   mutate(
     obs_month = month(obs_date),
@@ -187,16 +190,7 @@ ui <- page_navbar(
               `live-search` = TRUE
             )
           ),
-          pickerInput("year_filter",
-            label = "Choose year(s)",
-            choices = unique(daily_regional_summary$obs_year),
-            multiple = T,
-            selected = unique(daily_regional_summary$obs_year),
-            options = list(
-              `actions-box` = TRUE,
-              `live-search` = TRUE
-            )
-          )
+          uiOutput("year_ui")
         )
       )
     ),
@@ -329,6 +323,43 @@ server <- function(input, output, session) {
     },
     ignoreInit = TRUE
   )
+
+  # make avaialble year picker reactive so that it
+  # reflects the years for which all months
+  # selected in the month filter are available
+
+  eligible_years <- reactive({
+    req(input$month_filter)
+
+    sel_months <- sort(unique(as.integer(input$month_filter)))
+
+
+    daily_regional_summary |>
+      distinct(obs_year, month_of_year) |>
+      group_by(obs_year) |>
+      summarise(
+        months_present = list(sort(unique(month_of_year))),
+        .groups = "drop"
+      ) |>
+      filter(purrr::map_lgl(months_present, ~ all(sel_months %in% .x))) |>
+      pull(obs_year) |>
+      sort()
+  })
+
+  output$year_ui <- renderUI({
+    yrs <- eligible_years()
+
+    pickerInput("year_filter",
+      label = "Choose year(s)",
+      choices = yrs,
+      multiple = T,
+      selected = yrs,
+      options = list(
+        `actions-box` = TRUE,
+        `live-search` = TRUE
+      )
+    )
+  })
 
   # make a reactive of the region summaries by
   # user input filters
