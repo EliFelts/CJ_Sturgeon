@@ -186,6 +186,16 @@ ui <- page_navbar(
               `actions-box` = TRUE,
               `live-search` = TRUE
             )
+          ),
+          pickerInput("year_filter",
+            label = "Choose year(s)",
+            choices = unique(daily_regional_summary$obs_year),
+            multiple = T,
+            selected = unique(daily_regional_summary$obs_year),
+            options = list(
+              `actions-box` = TRUE,
+              `live-search` = TRUE
+            )
           )
         )
       )
@@ -311,7 +321,7 @@ server <- function(input, output, session) {
 
   observeEvent(input$nav,
     {
-      if (identical(input$nav, "Explore Fish Detections")) {
+      if (input$nav %in% c("Explore Fish Detections", "Explore Individuals")) {
         bslib::sidebar_toggle("sb", open = TRUE)
       } else {
         bslib::sidebar_toggle("sb", open = FALSE)
@@ -325,10 +335,13 @@ server <- function(input, output, session) {
 
   regional_summary_reactive <- reactive({
     req(input$month_filter)
+    req(input$year_filter)
+
 
     dat <- daily_regional_summary |>
       filter(
-        month_of_year %in% input$month_filter
+        month_of_year %in% input$month_filter,
+        obs_year %in% input$year_filter
       ) |>
       group_by(region, .drop = FALSE) |>
       summarise(
@@ -386,9 +399,13 @@ server <- function(input, output, session) {
 
   depth_summary_reactive <- reactive({
     req(input$month_filter)
+    req(input$year_filter)
 
     month_depth_dist <- fish_month_bins %>%
-      filter(obs_month %in% input$month_filter) |>
+      filter(
+        obs_month %in% input$month_filter,
+        obs_year %in% input$year_filter
+      ) |>
       group_by(month_of_year, depth_bin) %>%
       summarise(
         mean_prop = mean(prop, na.rm = TRUE),
@@ -775,6 +792,10 @@ server <- function(input, output, session) {
           values = range(vals),
           title = "Occupancy (%)",
           decreasing = TRUE
+        ) |>
+        addLegend(
+          pal = recent_pal,
+          values = c("Previous", "Latest")
         )
     },
     ignoreNULL = T
