@@ -50,6 +50,7 @@ conflicts_prefer(
 
 source("R/addLegend_decreasing.R")
 
+
 # read in shiny pieces
 
 
@@ -152,7 +153,8 @@ ui <- page_navbar(
   title = "CJ Strike Acoustic Telemetry Studies",
   theme = bs_theme(bootswatch = "flatly"),
   id = "nav",
-  header = tags$head(tags$style(HTML("
+  header = tags$head(
+    tags$style(HTML("
   /* Compact text inside bslib value boxes */
   .bslib-value-box .value-box-title {
     font-size: 0.75rem !important;
@@ -171,7 +173,39 @@ ui <- page_navbar(
   .bslib-value-box .value-box-showcase {
     font-size: 1.2rem !important;
   }
-"))),
+
+    /* Sticky selected fish card */
+  .sticky-selected {
+    position: sticky;
+    top: 0.5rem;
+    z-index: 1000;
+
+    /* Make DT header sticky within its scroll container */
+.dataTables_scrollHead {
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 10 !important;
+}
+
+/* Ensure the body is the scrolling element */
+.dataTables_scrollBody {
+  overflow-y: auto !important;
+}
+  }
+
+")),
+    tags$script(src = "https://unpkg.com/leaflet-easyprint@2.1.9/dist/bundle.js"),
+    tags$style(HTML("
+  .bslib-value-box .value-box-title,
+  .bslib-value-box .bslib-value-box-title,
+  .bslib-value-box .card-title,
+  .bslib-value-box h2,
+  .bslib-value-box h3,
+  .bslib-value-box h4 {
+    font-weight: 700 !important;
+  }
+"))
+  ),
   sidebar = sidebar(
     width = 300,
     id = "sb",
@@ -334,7 +368,7 @@ server <- function(input, output, session) {
     ignoreInit = TRUE
   )
 
-  # make avaialble year picker reactive so that it
+  # make availalble year picker reactive so that it
   # reflects the years for which all months
   # selected in the month filter are available
 
@@ -392,7 +426,7 @@ server <- function(input, output, session) {
         .groups = "drop"
       ) %>%
       mutate(
-        mean_prop = mean_prop / sum(mean_prop),
+        mean_prop = if_else(is.nan(mean_prop) | is.na(mean_prop), 0, mean_prop),
         percent = 100 * mean_prop
       )
   })
