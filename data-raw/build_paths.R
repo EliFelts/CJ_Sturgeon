@@ -367,7 +367,7 @@ for (i in seq_len(n)) {
 # and fill in holes in clark fork delta for
 # spatial joining purposes
 
-cj_regions <- st_read("data/cj_telemetry_mapping.gpkg",
+cj_regions <- st_read("data-raw/cj_telemetry_mapping.gpkg",
   layer = "regions"
 )
 

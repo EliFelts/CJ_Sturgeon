@@ -947,5 +947,3 @@ fish_month_bins_complete <- fish_month_bins %>%
 # in the shiny app
 
 write_feather(fish_month_bins_complete, "shiny_pieces/fish_month_bins")
-
-toc()
