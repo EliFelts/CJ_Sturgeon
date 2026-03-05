@@ -6,7 +6,8 @@ required_packages <- c(
   "DT", "leaflet", "leafem", "arrow",
   "shinyWidgets", "conflicted", "plotly",
   "tidyr", "fontawesome", "scales",
-  "ggokabeito", "readr", "sf"
+  "ggokabeito", "readr", "sf", "RColorBrewer",
+  "colorspace"
 )
 
 installed_packages <- rownames(installed.packages())
@@ -35,6 +36,8 @@ library(readr)
 library(ggokabeito)
 library(sf)
 library(markdown)
+library(RColorBrewer)
+library(colorspace)
 
 
 conflicts_prefer(
@@ -60,7 +63,12 @@ individual_summary <- read_feather("shiny_pieces/individual_summary") |>
   select(-.latest_idx)
 
 individual_daily_summary <- read_feather("shiny_pieces/individual_daily_summary") |>
-  mutate(location_id = factor(location_id))
+  mutate(location_id = factor(location_id,
+    levels = c(
+      "CJ_HOMESTEAD", "CJ_BOWL_LOWER", "CJ_BOWL_UPPER",
+      "CJ_STGALLEY_LOWER", "CJ_STGALLEY_UPPER"
+    )
+  ))
 
 individual_dailydepth_summary <- read_feather("shiny_pieces/individual_dailydepth_summary")
 
@@ -1009,10 +1017,11 @@ server <- function(input, output, session) {
             "Percent of Max:", round(count / detection_max * 100),
             sep = " "
           )
-        )
+        ),
+        color = "black", linewidth = 0.05
       ) +
       scale_fill_manual(
-        values = location_pal,
+        values = diverging_hcl(5, palette = "Blue-Red 3"),
         drop = FALSE
       ) +
       geom_hline(
@@ -1040,8 +1049,8 @@ server <- function(input, output, session) {
         linetype = "dashed", color = "blue"
       ) +
       scale_x_date(
-        date_breaks = "1 month",
-        date_labels = "%b %y"
+        date_breaks = "3 months",
+        date_labels = "%b\n%Y"
       ) +
       theme_bw() +
       theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
@@ -1093,8 +1102,8 @@ server <- function(input, output, session) {
       scale_color_manual(values = c(exceed = "red", normal = "black")) +
       scale_y_reverse(limits = c(NA, 0)) +
       scale_x_date(
-        date_breaks = "1 month",
-        date_labels = "%b %y"
+        date_breaks = "3 months",
+        date_labels = "%b\n%Y"
       ) +
       theme_bw() +
       theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
