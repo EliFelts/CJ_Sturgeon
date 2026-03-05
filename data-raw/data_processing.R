@@ -12,9 +12,6 @@ library(arrow)
 library(readxl)
 library(suncalc)
 library(sf)
-library(tictoc)
-
-tic()
 
 source("R/identify_cluster.R")
 source("R/interpolate_hourly.R")
@@ -31,7 +28,7 @@ shared_parent.dir <- "~/Library/CloudStorage/OneDrive-SunnysideInsights/CJ_Telem
 
 # read in deployment locations and join to regions
 
-cj_regions <- st_read("data/cj_telemetry_mapping.gpkg",
+cj_regions <- st_read("data-raw/cj_telemetry_mapping.gpkg",
   layer = "regions"
 )
 
@@ -166,6 +163,18 @@ fish.df <- read_excel(path = str_c(shared_parent.dir, "Telemetry_TaggedSturgeon_
     fork_length_cm = fish_fork_length, fish_end_date, mean_delay
   )
 
+# read in table of which files have already been processed
+# and drop from this list so only new files are read in
+# during each run of this script
+
+# processed.logs <- list.files(
+#   "data-raw/processed_logs",
+#   full.names = T
+# )
+#
+# files.processed <- map_dfr(processed.logs, read_feather) |>
+#   pull(file)
+
 # all detection csv files should be placed in the
 # shared OneDrive folder (migrate to sharepoint once setup)
 
@@ -177,6 +186,9 @@ detections.files <- list.files(
   full.names = T
 )
 
+# detections.files <- detections.files[
+#   !basename(detections.files) %in% files.processed
+# ]
 
 # iterate to read in all detections; these helper
 # functions are used to make sure things like
@@ -185,13 +197,13 @@ detections.files <- list.files(
 
 # first step or reading all these detection files in
 
-detections.read_raw <- purrr::map_dfr(detections.files, read_detections)
+detections.read <- purrr::map_dfr(detections.files, read_detections)
 
 # parse the datetimes; these tend to get saved in two forms in
 # these files, so this is designed to work properly with
 # either of those
 
-detections.read_parse <- detections.read_raw |>
+detections.read <- detections.read |>
   mutate(
     is_mdy = str_detect(dt_raw, "^\\d{1,2}/\\d{1,2}/\\d{4}"),
     has_hms = str_detect(dt_raw, ":\\d{2}:\\d{2}\\s*$"),
@@ -207,24 +219,31 @@ detections.read_parse <- detections.read_raw |>
 # datetime formats, need to make sure they didn't round
 # everything to the nearest minute
 
-file_dt_qa <- detections.read_parse |>
+file_dt_qa <- detections.read |>
   filter(!is.na(detection_datetime)) |>
   group_by(file) |>
   summarize(
     n = n(),
     n_mdy = sum(is_mdy),
     prop_sec0 = mean(sec == 0, na.rm = T),
+    earliest = min(detection_datetime),
+    latest = max(detection_datetime),
     .groups = "drop"
   ) |>
   mutate(minute_rounded_flag = prop_sec0 > 0.995) |>
   select(file, minute_rounded_flag)
+
+# export this piece as it will document
+# which csv files have already been processed into the database
+
+write_feather(file_dt_qa, str_c("data-raw/processed_logs/detectionfiles", Sys.Date(), sep = "_"))
 
 # Join that QA flag back in to all detections; this will be
 # used to retain the rounded values if there are not
 # subsequent detections if they were later downloaded,
 # or keep them if they're all that's available
 
-detections.read_parse2 <- detections.read_parse |>
+detections.read <- detections.read |>
   left_join(file_dt_qa, by = "file") |>
   mutate(
     dt_min = floor_date(detection_datetime, "minute"),
@@ -237,7 +256,7 @@ detections.read_parse2 <- detections.read_parse |>
 # per minute and one of the sources is a file
 # that has rounded detection datetimes
 
-detections.deduped <- detections.read_parse2 |>
+detections.read <- detections.read |>
   filter(!(minute_rounded_flag & minute_det_count > 1))
 
 # search for any NA in detection_datetime; there should
@@ -245,14 +264,13 @@ detections.deduped <- detections.read_parse2 |>
 # the past these bugs have occurred because of the inconsistency
 # in delimeters and how datetimes are formatted
 
-
-na_dt <- detections.deduped |>
+na_dt <- detections.read |>
   filter(is.na(detection_datetime))
 
 # once th NA check is passed narrow to only
 # distinct values
 
-detections.read <- detections.deduped |>
+detections.read <- detections.read |>
   ungroup() |>
   select(detection_datetime, internal_receiver_id, acoustic_tag_id, raw_sensor) |>
   distinct()
@@ -260,7 +278,7 @@ detections.read <- detections.deduped |>
 # join to acoustic id table so real sensor values
 # can be calculated for each detection, where applicable
 
-detections_acousticid.join <- detections.read %>%
+detections <- detections.read %>%
   left_join(acoustic_id.df, by = "acoustic_tag_id") %>%
   mutate(
     real_sensor = if_else(
@@ -270,6 +288,11 @@ detections_acousticid.join <- detections.read %>%
     ),
     detection_datetime_local = with_tz(detection_datetime, tz = "America/Denver")
   )
+
+# start removing copies of some of these large tables because with
+# this large of a data set the RStudio session gets bogged down
+
+rm(detections.read)
 
 # create a range-based join to use when joining
 # detections to deployments, so that they are joined
@@ -284,7 +307,7 @@ deployment_by <- join_by(internal_receiver_id, between(detection_datetime_local,
 # time stamp if it is currently NA because those are
 # actively deployed receivers
 
-detections_deployments.join <- detections_acousticid.join %>%
+detections <- detections %>%
   left_join(
     deployments.df %>%
       mutate(end_datetime = coalesce(end_datetime, as.POSIXct("9999-12-31"))),
@@ -304,7 +327,7 @@ fish_by <- join_by(serial_number, between(detection_datetime_local, release_date
 # time stamp if it is currently NA because they haven't been
 # confirmed as being removed
 
-detection_fish.join <- detections_deployments.join %>%
+detections <- detections %>%
   filter(!is.na(detection_datetime)) %>%
   left_join(
     fish.df,
@@ -318,14 +341,11 @@ detection_fish.join <- detections_deployments.join %>%
     longitude = longitude.x
   )
 
-na_location <- detections_deployments.join |>
-  filter(is.na(location_id))
-
 # now add in some other categorizations for the detections
 # for season and whether at day versus night
 
-detection_sunlight.dat <- tibble(detection_date = seq(min(detection_fish.join$detection_datetime),
-  max(detection_fish.join$detection_datetime),
+detection_sunlight.dat <- tibble(detection_date = seq(min(detections$detection_datetime),
+  max(detections$detection_datetime),
   by = "days"
 )) %>%
   mutate(
@@ -340,7 +360,7 @@ detection_sunlight.dat <- tibble(detection_date = seq(min(detection_fish.join$de
   select(detection_date, dawn, dusk)
 
 
-detections_sunlight.join <- detection_fish.join %>%
+detections <- detections %>%
   filter(!is.na(deployment_id)) |>
   mutate(
     detection_datetime = with_tz(detection_datetime, tz = "America/Denver"),
@@ -360,6 +380,8 @@ detections_sunlight.join <- detection_fish.join %>%
     )
   )
 
+rm(detection_sunlight.dat)
+
 # get only detections associated with fish and that can
 # be associated with a known location, and
 # find suspected false detections flagged by being
@@ -377,7 +399,7 @@ detections_sunlight.join <- detection_fish.join %>%
 # this uses location and fish id, not necessarily receiver
 # and transmitter id
 
-fish_detections.dat <- detections_sunlight.join |>
+fish_detections.dat <- detections |>
   filter(
     !is.na(fish_id),
     !is.na(location_id)
@@ -393,6 +415,32 @@ fish_detections.dat <- detections_sunlight.join |>
     flag_false = min_gap > 5400
   )
 
+rm(detections)
+
+# This is the point to filter out flagged detections and write the output
+# for future use; will need to append to existing?
+
+# bring in existing filtered detections and bind
+
+# existing_detections <- read_feather("data-raw/filtered_detection_data")
+
+# drop flagged detections and bind to existing detections
+
+filtered_fish_detections <- fish_detections.dat |>
+  filter(!flag_false) |>
+  # bind_rows(existing_detections) |>
+  distinct()
+
+# export the updated file
+
+write_feather(
+  filtered_fish_detections,
+  "data-raw/filtered_detection_data"
+)
+
+# rm(existing_detections)
+
+
 # flag fish that show up in clustered
 # patterns at a single receiver in a way that
 # suggests they may potentially be dead; i wrote
@@ -404,7 +452,7 @@ fish_detections.dat <- detections_sunlight.join |>
 # indicate a fish may be dead in range of a receiver;
 # this function takes ~ 5-10 minutes to run
 
-flag_clustered_fish.df <- identify_cluster(detection.df = fish_detections.dat)
+flag_clustered_fish.df <- identify_cluster(detection.df = filtered_fish_detections)
 
 # summarize relevant detection history metrics for individuals;
 # this will be used to evaluate criteria for whether to
@@ -422,8 +470,7 @@ fish_battery.df <- fish.df %>%
   left_join(transmitters.df, by = "serial_number") %>%
   select(fish_id, tag_life_days)
 
-individual_detection.table <- fish_detections.dat %>%
-  filter(flag_false == F) %>% # remove false detections
+individual_detection.table <- filtered_fish_detections |>
   left_join(fish.df, by = c(
     "fish_id", "species",
     "serial_number"
@@ -545,7 +592,7 @@ write_feather(fish_summary_state, "shiny_pieces/individual_summary")
 # that had depth tags
 
 
-individual_dailydepth.summary <- fish_detections.dat |>
+individual_dailydepth.summary <- filtered_fish_detections |>
   filter(
     !flag_false,
     sensor_type == "depth",
@@ -567,7 +614,7 @@ write_feather(individual_dailydepth.summary, "shiny_pieces/individual_dailydepth
 
 # summarize daily detections by location for individuals
 
-individual_daily.summary <- fish_detections.dat %>%
+individual_daily.summary <- filtered_fish_detections %>%
   filter(!flag_false) %>%
   group_by(fish_id, location_id, detection_date) %>%
   summarize(count = n()) |>
@@ -581,7 +628,7 @@ write_feather(individual_daily.summary, "shiny_pieces/individual_daily_summary")
 ## have been detected for use in maps of
 # individual fish
 
-individual_receiver_summary <- fish_detections.dat %>%
+individual_receiver_summary <- filtered_fish_detections %>%
   filter(
     !is.na(fish_id),
     !flag_false
@@ -611,8 +658,7 @@ write_feather(individual_receiver_summary, "shiny_pieces/individual_receiver_sum
 
 # daily counts by deployment
 
-location_daily <- fish_detections.dat %>%
-  filter(!flag_false) |>
+location_daily <- filtered_fish_detections |>
   group_by(location_id, species, detection_date) %>%
   summarize(
     detections = n(),
@@ -690,8 +736,7 @@ write_feather(
 
 # get unique daily fish by receiver
 
-receiver_uniquefish <- fish_detections.dat %>%
-  filter(!flag_false) |>
+receiver_uniquefish <- filtered_fish_detections %>%
   distinct(fish_id, detection_date, internal_receiver_id, .keep_all = T)
 
 write_feather(
@@ -699,20 +744,8 @@ write_feather(
   "shiny_pieces/receiver_uniquefish"
 )
 
-# export raw fish detections
-
-write_feather(
-  fish_detections.dat,
-  "shiny_pieces/fish_detection_data"
-)
 
 # get hourly detections for every individual in the data set
-
-# drop flagged detections
-
-filtered_fish_detections <- fish_detections.dat |>
-  filter(!flag_false)
-
 
 # make a vector of each unique fish id
 
@@ -722,7 +755,7 @@ unique_fish <- unique(filtered_fish_detections$fish_id)
 # across the range of dates during which they
 # were detected; this will take 5-10 minutes to run
 
-cj_network_points <- read_csv("data/cj_network_points.csv")
+cj_network_points <- read_csv("data-raw/cj_network_points.csv")
 
 hourly_fish_interpolated <- map_dfr(
   unique_fish, ~ interpolate_hourly(
@@ -737,7 +770,6 @@ hourly_fish_interpolated <- map_dfr(
     obs_year = year(obs_date),
     species = word(fish_id, 3, sep = "_")
   )
-
 
 
 # hourly_fish_region.join <- hourly_fish_interpolated |>
