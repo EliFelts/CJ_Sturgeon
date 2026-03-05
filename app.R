@@ -259,6 +259,10 @@ ui <- page_navbar(
       layout_columns(
         card(card_header("Occupancy by Region"),
           leafletOutput("regional_occ_map"),
+          downloadButton(
+            "download_regional_map",
+            "Download a copy of this map"
+          ),
           height = "65vh",
           full_screen = TRUE
         ),
@@ -272,13 +276,6 @@ ui <- page_navbar(
   ),
   nav_panel(
     "Explore Individuals",
-    # layout_columns(
-    #   value_box(
-    #     title = "",
-    #     value = uiOutput("selected_individual_fish"),
-    #     max_height = "200px"
-    #   )
-    # ),
     page_fillable(
       layout_columns(
         card(
@@ -289,6 +286,7 @@ ui <- page_navbar(
         ),
         col_widths = 12,
       ),
+      uiOutput("selected_fish_card"),
       layout_columns(
         card(card_header("Selection Map"),
           leafletOutput("individual_map"),
@@ -468,6 +466,58 @@ server <- function(input, output, session) {
         decreasing = TRUE
       )
   })
+
+  # make a static copy of the regional occupancy
+  # available for download
+
+  regional_occ_reactive <- reactive({
+    req(input$month_filter)
+    req(input$year_filter)
+
+    dat <- regional_summary_reactive()
+
+    map.dat <- cj_regions |>
+      left_join(dat, by = "region")
+
+    vals <- map.dat$percent
+
+
+    map <- map.dat |>
+      ggplot() +
+      geom_sf(aes(fill = percent),
+        color = "white"
+      ) +
+      # coord_sf(
+      #   xlim = c(-116.364 - 0.5, -116.364 + 0.5),
+      #   ylim = c(48.15154 - 0.25, 48.15154 + 0.25),
+      #   expand = FALSE
+      # ) +
+      scale_fill_viridis_c(
+        option = "plasma",
+        limits = range(vals, na.rm = TRUE),
+        na.value = "transparent"
+      ) +
+      theme_void() +
+      labs(fill = "Percent Occupancy") +
+      theme(legend.position = c(0.75, 0.75))
+  })
+
+  # put the static regional occupancy map into a png
+  # to go into the download handler
+
+  output$download_regional_map <- downloadHandler(
+    filename = function() {
+      paste("regional_occupancy_plot_", as.integer(Sys.time()), ".png", sep = "")
+    },
+    content = function(file) {
+      req(regional_occ_reactive())
+      ggsave(file,
+        plot = regional_occ_reactive(),
+        width = 6.5, height = 7.5, units = c("in"), device = "png", bg = "white"
+      )
+    }
+  )
+
 
   # make a reactive depth summary object to feed
   # into depth distribution plot
@@ -714,37 +764,6 @@ server <- function(input, output, session) {
       filter(fish_id %in% dat$fish_id)
   })
 
-  # for now just a test to make sure the table
-  # selection is working properly
-
-  # output$selected_individual_fish <- renderUI({
-  #   req(individual_reactive())
-  #   req(individual_summary_reactive())
-  #
-  #   dat <- individual_summary_reactive() |>
-  #     mutate(
-  #       status_print = case_when(
-  #         status %in% c("excluded") ~ str_c(status, " (", exclude_reason, ")", sep = ""),
-  #         status %in% c("right_censored") ~ str_c(status, " (", censor_reason, ")", sep = ""),
-  #         TRUE ~ status
-  #       ),
-  #       length_in = round(total_length_in, 1)
-  #     )
-  #
-  #   HTML(str_c("<span><b>Fish ID:</b> ", dat$fish_id, "</span>",
-  #     "<br>",
-  #     "<span><b>Species:</b> ", dat$species, "</span>",
-  #     "<br>",
-  #     "<span><b>Length at tagging:</b> ", dat$fork_length_cm, "</span>",
-  #     "<br>",
-  #     "<span><b>Status:</b> ", dat$status_print, "</span>",
-  #     "<br>",
-  #     "<span><b>Total Detections:</b> ", comma(dat$n_detections), "</span>",
-  #     "<br>",
-  #     "<span><b>Unique Locations:</b> ", comma(dat$unique_locations), "</span>",
-  #     sep = " "
-  #   ))
-  # })
 
   # make a map for the individual page
 
@@ -772,6 +791,70 @@ server <- function(input, output, session) {
     },
     ignoreInit = TRUE
   )
+
+  # render a card to have sticky summaries of selected individual
+
+  selected_fish_row <- reactive({
+    req(selected_individual())
+    individual_summary %>%
+      filter(fish_id == selected_individual()) %>%
+      slice(1)
+  })
+
+  output$selected_fish_card <- renderUI({
+    r <- selected_fish_row()
+
+    fish_info <- HTML(str_c(
+      round(r$fork_length_cm, 1), " cm at tagging"
+    ))
+
+    # if status is active
+
+    if (r$status == "active") {
+      status_info <- HTML(
+        str_c(
+          r$status, "<br>",
+          "Battery end: ", r$battery_end_date
+        )
+      )
+    }
+
+    if (r$status == "right_censored") {
+      status_info <- HTML(
+        str_c(
+          r$status, "<br>",
+          "Censor reason: ", r$censor_reason
+        )
+      )
+    }
+
+    if (r$status == "excluded") {
+      status_info <- HTML(
+        str_c(
+          r$status, "<br>",
+          "Exclude reason: ", r$exclude_reason
+        )
+      )
+    }
+
+    latest_info <- HTML(
+      str_c(
+        format(r$latest_detection, "%Y-%m-%d"), " at ", r$latest_location
+      )
+    )
+
+
+    bslib::card(
+      bslib::card_header("Selected Fish"),
+      bslib::layout_columns(
+        bslib::value_box(tags$strong("Fish Info"), fish_info, max_height = "130px"),
+        bslib::value_box("Status", status_info, max_height = "130px"),
+        bslib::value_box("Latest", latest_info, max_height = "130px"),
+        col_widths = c(4, 4, 4)
+      ),
+      class = "sticky-selected"
+    )
+  })
 
   # make regional summaries of individuals react to selected
   # individual and months
