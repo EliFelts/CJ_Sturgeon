@@ -19,6 +19,7 @@ for (pkg in required_packages) {
 }
 
 library(shiny)
+library(shinyWidgets)
 library(tidyverse)
 library(leaflet)
 library(leafem)
@@ -101,12 +102,20 @@ daily_nfish <- read_feather("shiny_pieces/daily_nfish") |>
     obs_year = year(obs_date)
   )
 
-cj_regions <- st_read("data/cj_telemetry_mapping.gpkg",
+cj_regions <- st_read("data-raw/cj_telemetry_mapping.gpkg",
   layer = "regions"
 ) |>
   mutate(region = factor(region))
 
 fish_month_bins <- read_feather("shiny_pieces/fish_month_bins")
+
+fish_month_bins_location <- read_feather("shiny_pieces/fish_month_bins_location") |>
+  mutate(location_id = factor(location_id,
+    levels = c(
+      "CJ_HOMESTEAD", "CJ_BOWL_LOWER", "CJ_BOWL_UPPER",
+      "CJ_STGALLEY_LOWER", "CJ_STGALLEY_UPPER"
+    )
+  ))
 
 # build base leaflet map
 
@@ -234,7 +243,12 @@ ui <- page_navbar(
               `live-search` = TRUE
             )
           ),
-          uiOutput("year_ui")
+          uiOutput("year_ui"),
+          prettySwitch(
+            "depth_select",
+            "Filter depth by location"
+          ),
+          uiOutput("depthfilter_ui")
         )
       )
     ),
@@ -411,6 +425,21 @@ server <- function(input, output, session) {
     )
   })
 
+  # make a reactive UI for filtering depth distribution
+  # data
+
+  output$depthfilter_ui <- renderUI({
+    req(input$depth_select)
+
+    selectInput("depth_loc_filter",
+      "Choose location for depth distribution",
+      choices = c(
+        "CJ_HOMESTEAD", "CJ_BOWL_LOWER",
+        "CJ_STGALLEY_LOWER", "CJ_STGALLEY_UPPER"
+      )
+    )
+  })
+
   # make a reactive of the region summaries by
   # user input filters
 
@@ -534,18 +563,36 @@ server <- function(input, output, session) {
     req(input$month_filter)
     req(input$year_filter)
 
-    month_depth_dist <- fish_month_bins %>%
-      filter(
-        obs_month %in% input$month_filter,
-        obs_year %in% input$year_filter
-      ) |>
-      group_by(month_of_year, depth_bin) %>%
-      summarise(
-        mean_prop = mean(prop, na.rm = TRUE),
-        n_fish = n_distinct(fish_id),
-        .groups = "drop"
-      )
+    if (isTRUE(input$depth_select)) {
+      req(input$depth_loc_filter)
+
+      fish_month_bins_location %>%
+        filter(
+          obs_month %in% input$month_filter,
+          obs_year %in% input$year_filter,
+          location_id %in% input$depth_loc_filter
+        ) %>%
+        group_by(month_of_year, depth_bin) %>%
+        summarise(
+          mean_prop = mean(prop, na.rm = TRUE),
+          n_fish = n_distinct(fish_id),
+          .groups = "drop"
+        )
+    } else {
+      fish_month_bins %>%
+        filter(
+          obs_month %in% input$month_filter,
+          obs_year %in% input$year_filter
+        ) |>
+        group_by(month_of_year, depth_bin) %>%
+        summarise(
+          mean_prop = mean(prop, na.rm = TRUE),
+          n_fish = n_distinct(fish_id),
+          .groups = "drop"
+        )
+    }
   })
+
 
   # render depth plot
 
