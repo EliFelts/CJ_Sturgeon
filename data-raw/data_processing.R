@@ -884,21 +884,6 @@ hourly_depth_detections <- valid_depth_detections |>
     .groups = "drop"
   )
 
-# pull out an individual and see what that daily distributions
-# tend to look like
-
-hourly_distribution_depths <- valid_depth_detections |>
-  mutate(detection_hour = floor_date(detection_datetime, "hour")) |>
-  group_by(fish_id, detection_date, detection_hour) |>
-  summarize(
-    n_detections = n(),
-    min_depth = min(real_sensor),
-    max_depth = max(real_sensor),
-    median_depth = median(real_sensor),
-    range_depth = max_depth - min_depth
-  )
-
-
 # Define depth bins, just a starting point here
 
 depth_breaks <- c(0, 3, 6, 9, 12, 15, 18, 21, Inf)
@@ -947,3 +932,61 @@ fish_month_bins_complete <- fish_month_bins %>%
 # in the shiny app
 
 write_feather(fish_month_bins_complete, "shiny_pieces/fish_month_bins")
+
+# summarize depth by location
+
+# for each individual, collapse to a single depth
+# per hour on a given valid day
+
+hourly_depth_detections_location <- valid_depth_detections |>
+  mutate(detection_hour = floor_date(detection_datetime, "hour")) |>
+  group_by(fish_id, location_id, detection_date, detection_hour) |>
+  summarize(
+    median_depth = median(real_sensor),
+    .groups = "drop"
+  )
+
+hourly_depth_binned_location <- hourly_depth_detections_location %>%
+  mutate(
+    month = floor_date(detection_date, "month"),
+    depth_bin = cut(
+      median_depth,
+      breaks = depth_breaks,
+      labels = depth_labels,
+      include.lowest = TRUE,
+      right = FALSE
+    )
+  ) %>%
+  filter(!is.na(depth_bin))
+
+
+# proportion of hours by fish within a month
+# that were occupied at a given depth bin
+
+fish_month_bins_location <- hourly_depth_binned_location %>%
+  group_by(fish_id, location_id, month, depth_bin) %>%
+  summarise(hours = n(), .groups = "drop") %>%
+  group_by(fish_id, location_id, month) %>%
+  mutate(
+    total_hours = sum(hours),
+    prop = hours / total_hours
+  ) %>%
+  ungroup()
+
+# complete by filling in depth bins with
+# 0 if no observations
+
+fish_month_bins_complete_location <- fish_month_bins_location %>%
+  group_by(fish_id, location_id, month) %>%
+  complete(depth_bin, fill = list(hours = 0, prop = 0)) %>%
+  ungroup() |>
+  mutate(
+    month_of_year = month(month, label = T),
+    obs_month = month(month),
+    obs_year = year(month)
+  )
+
+# export this piece to be used
+# in the shiny app
+
+write_feather(fish_month_bins_complete_location, "shiny_pieces/fish_month_bins_location")
