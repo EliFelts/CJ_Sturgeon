@@ -1,22 +1,22 @@
-# check that necessary packages are installed, if not
-# install them
-
-required_packages <- c(
-  "tidyverse", "shiny", "bslib", "bsicons",
-  "DT", "leaflet", "leafem", "arrow",
-  "shinyWidgets", "conflicted", "plotly",
-  "tidyr", "fontawesome", "scales",
-  "ggokabeito", "readr", "sf", "RColorBrewer",
-  "colorspace"
-)
-
-installed_packages <- rownames(installed.packages())
-
-for (pkg in required_packages) {
-  if (!pkg %in% installed_packages) {
-    install.packages(pkg)
-  }
-}
+# # check that necessary packages are installed, if not
+# # install them
+#
+# required_packages <- c(
+#   "tidyverse", "shiny", "bslib", "bsicons",
+#   "DT", "leaflet", "leafem", "arrow",
+#   "shinyWidgets", "conflicted", "plotly",
+#   "tidyr", "fontawesome", "scales",
+#   "ggokabeito", "readr", "sf",
+#   "colorspace","shinywidgets"
+# )
+#
+# installed_packages <- rownames(installed.packages())
+#
+# for (pkg in required_packages) {
+#   if (!pkg %in% installed_packages) {
+#     install.packages(pkg)
+#   }
+# }
 
 library(shiny)
 library(shinyWidgets)
@@ -37,7 +37,6 @@ library(readr)
 library(ggokabeito)
 library(sf)
 library(markdown)
-library(RColorBrewer)
 library(colorspace)
 
 
@@ -102,7 +101,7 @@ daily_nfish <- read_feather("shiny_pieces/daily_nfish") |>
     obs_year = year(obs_date)
   )
 
-cj_regions <- st_read("data-raw/cj_telemetry_mapping.gpkg",
+cj_regions <- st_read("shiny_pieces/cj_telemetry_mapping.gpkg",
   layer = "regions"
 ) |>
   mutate(region = factor(region))
