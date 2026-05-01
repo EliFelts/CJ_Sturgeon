@@ -30,13 +30,7 @@ shared_parent.dir <- "~/Library/CloudStorage/OneDrive-SunnysideInsights/CJ_Telem
 
 cj_regions <- st_read("data-raw/cj_telemetry_mapping.gpkg",
   layer = "regions"
-) |>
-  mutate(region = case_when(
-    region == "upper" ~ "Upper Alley",
-    region == "lower" ~ "Lower Alley",
-    region == "alley" ~ "Alley",
-    region == "bowl" ~ "Hope"
-  ))
+)
 
 # Read in deployment locations
 
@@ -514,7 +508,7 @@ individual_detection.table <- filtered_fish_detections |>
 
 fish_summary_join <- fish.df |>
   select(
-    fish_id, serial_number, release_datetime, fish_end_date,
+    fish_id, fish_sex, serial_number, release_datetime, fish_end_date,
     species, fork_length_cm
   ) |>
   left_join(individual_detection.table, by = c("fish_id", "fish_end_date")) |>
@@ -620,11 +614,15 @@ write_feather(individual_dailydepth.summary, "shiny_pieces/individual_dailydepth
 
 # summarize daily detections by location for individuals
 
+location_key <- deploy_locations.df |>
+  select(location_id, location_name)
+
 individual_daily.summary <- filtered_fish_detections %>%
   filter(!flag_false) %>%
   group_by(fish_id, location_id, detection_date) %>%
   summarize(count = n()) |>
-  left_join(fish.df, by = "fish_id")
+  left_join(fish.df, by = "fish_id") |>
+  left_join(location_key, by = "location_id")
 
 # write daily detection summaries for use in Shiny
 

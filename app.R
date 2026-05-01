@@ -63,10 +63,13 @@ individual_summary <- read_feather("shiny_pieces/individual_summary") |>
   select(-.latest_idx)
 
 individual_daily_summary <- read_feather("shiny_pieces/individual_daily_summary") |>
-  mutate(location_id = factor(location_id,
+  ungroup() |>
+  select(-location_id) |>
+  mutate(location_id = factor(location_name,
     levels = c(
-      "CJ_HOMESTEAD", "CJ_BOWL_LOWER", "CJ_BOWL_UPPER",
-      "CJ_STGALLEY_LOWER", "CJ_STGALLEY_UPPER"
+      "Upper Alley", "Lower Alley",
+      "Upper Bowl", "Lower Bowl",
+      "Orchard"
     )
   ))
 
@@ -111,7 +114,7 @@ fish_month_bins <- read_feather("shiny_pieces/fish_month_bins")
 fish_month_bins_location <- read_feather("shiny_pieces/fish_month_bins_location") |>
   mutate(location_id = factor(location_id,
     levels = c(
-      "CJ_HOMESTEAD", "CJ_BOWL_LOWER", "CJ_BOWL_UPPER",
+      "CJ_ORCHARD", "CJ_BOWL_LOWER", "CJ_BOWL_UPPER",
       "CJ_STGALLEY_LOWER", "CJ_STGALLEY_UPPER"
     )
   ))
@@ -159,7 +162,7 @@ location_pal <- c(
   "CJ_STGALLEY_LOWER" = "#56B4E9",
   "CJ_BOWL_UPPER" = "#009E73",
   "CJ_BOWL_LOWER" = "#F0E442",
-  "CJ_HOMESTEAD" = "#0072B2"
+  "CJ_ORCHARD" = "#0072B2"
 )
 
 
@@ -433,7 +436,7 @@ server <- function(input, output, session) {
     selectInput("depth_loc_filter",
       "Choose location for depth distribution",
       choices = c(
-        "CJ_HOMESTEAD", "CJ_BOWL_LOWER",
+        "CJ_ORCHARD", "CJ_BOWL_LOWER",
         "CJ_STGALLEY_LOWER", "CJ_STGALLEY_UPPER"
       )
     )
@@ -777,7 +780,8 @@ server <- function(input, output, session) {
         days_since_last = round(time_since_last)
       ) |>
       select(
-        fish_id, fork_length_cm, n_detections,
+        fish_id, fork_length_cm,
+        sex = fish_sex, n_detections,
         unique_locations, latest_location, days_since_last,
         status, censor_reason
       )
@@ -859,7 +863,9 @@ server <- function(input, output, session) {
     r <- selected_fish_row()
 
     fish_info <- HTML(str_c(
-      round(r$fork_length_cm, 1), " cm at tagging"
+      round(r$fork_length_cm, 1), " cm at tagging",
+      "<br>",
+      str_to_title(r$fish_sex)
     ))
 
     # if status is active
