@@ -30,7 +30,13 @@ shared_parent.dir <- "~/Library/CloudStorage/OneDrive-SunnysideInsights/CJ_Telem
 
 cj_regions <- st_read("data-raw/cj_telemetry_mapping.gpkg",
   layer = "regions"
-)
+) |>
+  mutate(region = case_when(
+    region == "upper" ~ "Upper Alley",
+    region == "lower" ~ "Lower Alley",
+    region == "alley" ~ "Alley",
+    region == "bowl" ~ "Hope"
+  ))
 
 # Read in deployment locations
 
@@ -160,7 +166,7 @@ fish.df <- read_excel(path = str_c(shared_parent.dir, "Telemetry_TaggedSturgeon_
   select(fish_id,
     serial_number, species, release_datetime,
     latitude = release_location_lat, longitude = release_location_long,
-    fork_length_cm = fish_fork_length, fish_end_date, mean_delay
+    fork_length_cm = fish_fork_length, fish_sex, fish_end_date, mean_delay
   )
 
 # read in table of which files have already been processed
