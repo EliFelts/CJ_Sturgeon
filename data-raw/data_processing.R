@@ -775,7 +775,6 @@ hourly_fish_interpolated <- map_dfr(
     species = word(fish_id, 3, sep = "_")
   )
 
-
 # hourly_fish_region.join <- hourly_fish_interpolated |>
 #   filter(!is.na(det_long)) |>
 #   st_as_sf(
@@ -803,6 +802,11 @@ hourly_fish_interpolated <- map_dfr(
 # which is daily_region_summary
 
 daily_region_hours_all <- hourly_fish_interpolated %>%
+  mutate(region = case_when(
+    join_name == "CJ_BOWL_LOWER_to_CJ_STGALLEY_LOWER" & is.na(region) & calculated_rkm == 4.9 ~ "alley",
+    join_name == "CJ_STGALLEY_LOWER_to_CJ_BOWL_LOWER" & is.na(region) & calculated_rkm == 4.9 ~ "alley",
+    TRUE ~ region
+  )) |>
   group_by(fish_id, obs_date, region) |>
   summarize(
     hours = n(),
