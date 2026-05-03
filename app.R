@@ -91,7 +91,10 @@ location_coverage <- read_feather("shiny_pieces/location_coverage")
 lost_receivers <- read_feather("shiny_pieces/lost_receivers")
 
 daily_region_hours_all <- read_feather("shiny_pieces/daily_region_hours_all") |>
-  mutate(month_of_year = month(obs_date))
+  mutate(
+    month_of_year = month(obs_date),
+    obs_year = year(obs_date)
+  )
 
 daily_regional_summary <- read_feather("shiny_pieces/daily_region_summary_all")
 
@@ -268,7 +271,8 @@ ui <- page_navbar(
               `actions-box` = TRUE,
               `live-search` = TRUE
             )
-          )
+          ),
+          uiOutput("ind_year_ui")
         )
       )
     ),
@@ -810,6 +814,48 @@ server <- function(input, output, session) {
     dat <- individual_summary[selected_individual, ]
   })
 
+
+  # # make available year picker reactive so that it
+  # # reflects the years for which all months
+  # # selected in the month filter are available
+  #
+
+  eligible_years_ind <- reactive({
+    req(input$ind_month_filter)
+
+    dat <- individual_reactive()
+
+    sel_months <- sort(unique(as.integer(input$ind_month_filter)))
+
+    daily_region_hours_all |>
+      filter(fish_id %in% dat$fish_id) |>
+      distinct(obs_year, month_of_year) |>
+      group_by(obs_year) |>
+      summarise(
+        months_present = list(sort(unique(month_of_year))),
+        .groups = "drop"
+      ) |>
+      filter(purrr::map_lgl(months_present, ~ all(sel_months %in% .x))) |>
+      pull(obs_year) |>
+      sort()
+  })
+
+  output$ind_year_ui <- renderUI({
+    yrs <- eligible_years_ind()
+
+    pickerInput("ind_year_filter",
+      label = "Choose year(s)",
+      choices = yrs,
+      multiple = T,
+      selected = yrs,
+      options = list(
+        `actions-box` = TRUE,
+        `live-search` = TRUE
+      )
+    )
+  })
+
+
   # filter the individual summary data based on
   # datatable selection
 
@@ -959,6 +1005,10 @@ server <- function(input, output, session) {
 
       occ.dat <- cj_regions |>
         left_join(region.dat, by = "region")
+
+      ind.dat <- individual_summary |>
+        filter(fish_id == selected_individual())
+
 
       vals <- occ.dat$percent
 
