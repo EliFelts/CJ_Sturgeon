@@ -169,6 +169,25 @@ location_pal <- c(
 )
 
 
+# req(input$ind_month_filter)
+#
+# dat <- individual_reactive()
+#
+# sel_months <- sort(unique(as.integer(input$ind_month_filter)))
+#
+# test <- daily_region_hours_all |>
+#   filter(fish_id %in% "1554686_2023-07-07_STG") |>
+#   distinct(obs_year, month_of_year) #|>
+#   group_by(obs_year) |>
+#   summarise(
+#     months_present = list(sort(unique(month_of_year))),
+#     .groups = "drop"
+#   ) |>
+#   filter(purrr::map_lgl(months_present, ~ all(sel_months %in% .x))) |>
+#   pull(obs_year) |>
+#   sort()
+
+
 # build user interface
 
 ui <- page_navbar(
@@ -271,8 +290,7 @@ ui <- page_navbar(
               `actions-box` = TRUE,
               `live-search` = TRUE
             )
-          ),
-          uiOutput("ind_year_ui")
+          )
         )
       )
     ),
@@ -820,40 +838,40 @@ server <- function(input, output, session) {
   # # selected in the month filter are available
   #
 
-  eligible_years_ind <- reactive({
-    req(input$ind_month_filter)
-
-    dat <- individual_reactive()
-
-    sel_months <- sort(unique(as.integer(input$ind_month_filter)))
-
-    daily_region_hours_all |>
-      filter(fish_id %in% dat$fish_id) |>
-      distinct(obs_year, month_of_year) |>
-      group_by(obs_year) |>
-      summarise(
-        months_present = list(sort(unique(month_of_year))),
-        .groups = "drop"
-      ) |>
-      filter(purrr::map_lgl(months_present, ~ all(sel_months %in% .x))) |>
-      pull(obs_year) |>
-      sort()
-  })
-
-  output$ind_year_ui <- renderUI({
-    yrs <- eligible_years_ind()
-
-    pickerInput("ind_year_filter",
-      label = "Choose year(s)",
-      choices = yrs,
-      multiple = T,
-      selected = yrs,
-      options = list(
-        `actions-box` = TRUE,
-        `live-search` = TRUE
-      )
-    )
-  })
+  # eligible_years_ind <- reactive({
+  #   req(input$ind_month_filter)
+  #
+  #   dat <- individual_reactive()
+  #
+  #   sel_months <- sort(unique(as.integer(input$ind_month_filter)))
+  #
+  #   daily_region_hours_all |>
+  #     filter(fish_id %in% dat$fish_id) |>
+  #     distinct(obs_year, month_of_year) |>
+  #     group_by(obs_year) |>
+  #     summarise(
+  #       months_present = list(sort(unique(month_of_year))),
+  #       .groups = "drop"
+  #     ) |>
+  #     filter(purrr::map_lgl(months_present, ~ all(sel_months %in% .x))) |>
+  #     pull(obs_year) |>
+  #     sort()
+  # })
+  #
+  # output$ind_year_ui <- renderUI({
+  #   yrs <- eligible_years_ind()
+  #
+  #   pickerInput("ind_year_filter",
+  #     label = "Choose year(s)",
+  #     choices = yrs,
+  #     multiple = T,
+  #     selected = yrs,
+  #     options = list(
+  #       `actions-box` = TRUE,
+  #       `live-search` = TRUE
+  #     )
+  #   )
+  # })
 
 
   # filter the individual summary data based on
@@ -966,7 +984,9 @@ server <- function(input, output, session) {
   # individual and months
 
   individual_occ_reactive <- reactive({
-    req(selected_individual(), input$ind_month_filter)
+    req(
+      selected_individual(), input$ind_month_filter
+    )
 
     daily_region_hours_all %>%
       filter(
@@ -1009,7 +1029,6 @@ server <- function(input, output, session) {
       ind.dat <- individual_summary |>
         filter(fish_id == selected_individual())
 
-
       vals <- occ.dat$percent
 
       pal_occ <- colorNumeric(
@@ -1022,6 +1041,7 @@ server <- function(input, output, session) {
       leafletProxy("individual_map") %>%
         clearGroup("occ") |>
         clearGroup("selection") %>%
+        clearGroup("release") |>
         clearControls() |>
         addPolygons(
           data = occ.dat,
@@ -1054,6 +1074,12 @@ server <- function(input, output, session) {
             "<br>",
             "<b>", "Total Detections: ", "</b>", comma(detections)
           )
+        ) |>
+        addMarkers(
+          data = ind.dat,
+          lng = ~release_long,
+          lat = ~release_lat,
+          group = "release"
         ) |>
         addLegend_decreasing(
           pal = pal_occ,
