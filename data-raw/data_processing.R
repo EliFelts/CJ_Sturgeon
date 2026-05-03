@@ -509,7 +509,8 @@ individual_detection.table <- filtered_fish_detections |>
 fish_summary_join <- fish.df |>
   select(
     fish_id, fish_sex, serial_number, release_datetime, fish_end_date,
-    species, fork_length_cm
+    species, fork_length_cm,
+    release_lat = latitude, release_long = longitude
   ) |>
   left_join(individual_detection.table, by = c("fish_id", "fish_end_date")) |>
   left_join(fish_battery.df, by = "fish_id") |>
