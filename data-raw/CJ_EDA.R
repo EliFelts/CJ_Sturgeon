@@ -20,6 +20,19 @@ source("R/fish_animations.R")
 source("R/detect_delim.R")
 source("R/read_detections.R")
 
+filtered_fish_detections <- read_feather("data-raw/filtered_detection_data")
+
+### Get a sense of whether max depth
+### at a receiver is/was reflecting the
+# bottom for each location
+
+depth_location_summary <- filtered_fish_detections |>
+  mutate(detection_month = month(detection_datetime_local)) |>
+  filter(sensor_type == "depth") |>
+  group_by(detection_month, location_id) |>
+  summarize(max_depth = max(real_sensor, na.rm = T))
+
+
 # look for when fish were potentially caught
 
 zero_detections <- filtered_fish_detections |>
